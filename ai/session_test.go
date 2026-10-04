@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"testing"
@@ -131,6 +132,148 @@ func TestSessionClear(t *testing.T) {
 	sent := provider.reqs[len(provider.reqs)-1]
 	if len(sent.Messages) != 1 || sent.Messages[0].Content != "two" {
 		t.Errorf("request Messages = %v, want just %q", sent.Messages, "two")
+	}
+}
+
+// scriptedProvider plays back a fixed list of responses, recording the
+// requests it receives.
+type scriptedProvider struct {
+	responses []Response
+	reqs      []Request
+}
+
+func (s *scriptedProvider) Send(ctx context.Context, req Request) (Response, error) {
+	s.reqs = append(s.reqs, req)
+	if len(s.responses) == 0 {
+		return Response{}, errors.New("scriptedProvider: no more responses")
+	}
+	resp := s.responses[0]
+	s.responses = s.responses[1:]
+	return resp, nil
+}
+
+func (s *scriptedProvider) SendStream(ctx context.Context, req Request, onChunk func(Chunk) error) (Response, error) {
+	resp, err := s.Send(ctx, req)
+	if err != nil {
+		return Response{}, err
+	}
+	if onChunk != nil && resp.Text != "" {
+		if err := onChunk(Chunk{Delta: resp.Text, Finished: true}); err != nil {
+			return Response{}, err
+		}
+	}
+	return resp, nil
+}
+
+func TestSessionToolUse(t *testing.T) {
+	provider := &scriptedProvider{responses: []Response{
+		{Messages: []Message{
+			{Role: RoleAssistant, Name: "echo", ToolCallID: "call-1", ToolArguments: `{"text":"hi"}`},
+		}, Finished: true},
+		{Text: "done", Finished: true},
+	}}
+
+	var gotArgs string
+	echo := Tool{
+		Name: "echo",
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+			gotArgs = string(args)
+			return "tool output", nil
+		},
+	}
+
+	session := NewSession(NewLoop(provider))
+	session.Tools = []Tool{echo}
+
+	resp, err := session.Say(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Say: %v", err)
+	}
+	if resp.Text != "done" {
+		t.Errorf("Text = %q, want %q", resp.Text, "done")
+	}
+	if gotArgs != `{"text":"hi"}` {
+		t.Errorf("handler args = %q, want %q", gotArgs, `{"text":"hi"}`)
+	}
+
+	want := []Message{
+		{Role: RoleUser, Content: "go"},
+		{Role: RoleAssistant, Name: "echo", ToolCallID: "call-1", ToolArguments: `{"text":"hi"}`},
+		{Role: RoleTool, Name: "echo", ToolCallID: "call-1", Content: "tool output"},
+		{Role: RoleAssistant, Content: "done"},
+	}
+	got := session.Messages()
+	if len(got) != len(want) {
+		t.Fatalf("Messages() = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("Messages()[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// Round two must carry the whole exchange, plus the session's tools.
+	if len(provider.reqs) != 2 {
+		t.Fatalf("provider calls = %d, want 2", len(provider.reqs))
+	}
+	sent := provider.reqs[1]
+	if len(sent.Messages) != 3 {
+		t.Fatalf("round 2 Messages = %v, want 3 entries", sent.Messages)
+	}
+	for i, m := range want[:3] {
+		if sent.Messages[i] != m {
+			t.Errorf("round 2 Messages[%d] = %+v, want %+v", i, sent.Messages[i], m)
+		}
+	}
+	if len(sent.Tools) != 1 || sent.Tools[0].Name != "echo" {
+		t.Errorf("round 2 Tools = %v, want the echo tool", sent.Tools)
+	}
+}
+
+func TestSessionUnknownTool(t *testing.T) {
+	provider := &scriptedProvider{responses: []Response{
+		{Messages: []Message{
+			{Role: RoleAssistant, Name: "nosuch", ToolCallID: "call-1", ToolArguments: `{}`},
+		}, Finished: true},
+		{Text: "recovered", Finished: true},
+	}}
+
+	session := NewSession(NewLoop(provider))
+	resp, err := session.Say(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Say: %v", err)
+	}
+	if resp.Text != "recovered" {
+		t.Errorf("Text = %q, want %q", resp.Text, "recovered")
+	}
+	got := session.Messages()
+	if len(got) != 4 || got[2].Role != RoleTool || got[2].Content != `error: unknown tool "nosuch"` {
+		t.Errorf("Messages() = %v, want the unknown-tool error as the tool result", got)
+	}
+}
+
+func TestSessionToolRoundLimit(t *testing.T) {
+	call := Response{Messages: []Message{
+		{Role: RoleAssistant, Name: "echo", ToolCallID: "call-1", ToolArguments: `{}`},
+	}, Finished: true}
+	provider := &scriptedProvider{responses: []Response{call, call, call, call}}
+
+	echo := Tool{
+		Name:    "echo",
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) { return "out", nil },
+	}
+
+	session := NewSession(NewLoop(provider))
+	session.Tools = []Tool{echo}
+	session.MaxToolRounds = 2
+
+	if _, err := session.Say(context.Background(), "go"); err == nil {
+		t.Fatal("Say: expected a tool round limit error, got nil")
+	}
+	// Every completed round is still recorded, including the call that
+	// tripped the limit: user + 3 calls + 2 results.
+	if got := len(session.Messages()); got != 6 {
+		t.Errorf("len(Messages()) = %d, want 6", got)
 	}
 }
 

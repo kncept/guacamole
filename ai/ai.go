@@ -14,7 +14,9 @@
 // Provider-specific code lives behind the Provider interface; loop policy
 // lives in Loop and Processor. Session builds stateful multi-turn
 // conversations on top of a Loop, keeping the history and sending it with
-// every exchange.
+// every exchange. Sessions also run tool use: when a response requests
+// tool calls, the session executes them, records the results, and runs the
+// conversation again until the model answers.
 //
 // Typical use:
 //
@@ -30,6 +32,11 @@
 //	fmt.Println(resp.Text)
 package ai
 
+import (
+	"context"
+	"encoding/json"
+)
+
 // Role identifies the author of a Message.
 type Role string
 
@@ -41,11 +48,39 @@ const (
 )
 
 // Message is one entry in a conversation.
+//
+// Tool use is represented with two message shapes. An assistant message
+// with a Name is a tool call the model requested: Name is the tool,
+// ToolCallID identifies the call, and ToolArguments holds the JSON
+// arguments. A RoleTool message with the same ToolCallID is the result,
+// with the output in Content.
 type Message struct {
 	Role    Role   `json:"role"`
 	Content string `json:"content"`
-	// Name identifies the sender for tool messages.
+	// Name identifies the tool for tool call and tool result messages.
 	Name string `json:"name,omitempty"`
+	// ToolCallID correlates a tool call with its result: the model sets it
+	// on the call, and the result echoes it back.
+	ToolCallID string `json:"toolCallId,omitempty"`
+	// ToolArguments holds the JSON arguments of a tool call.
+	ToolArguments string `json:"toolArguments,omitempty"`
+}
+
+// ToolHandler executes one tool call. args is the raw JSON arguments the
+// model produced; the returned string becomes the tool result the model
+// sees.
+type ToolHandler func(ctx context.Context, args json.RawMessage) (string, error)
+
+// Tool is a function the model may call during an exchange.
+type Tool struct {
+	// Name is the function name the model calls (e.g. "read_file").
+	Name string
+	// Description tells the model when and how to use the tool.
+	Description string
+	// Parameters is a JSON Schema object describing the arguments.
+	Parameters map[string]any
+	// Handler executes a call.
+	Handler ToolHandler
 }
 
 // Request is everything a Provider needs to call a model once.
@@ -71,6 +106,10 @@ type Request struct {
 	// MaxTokens, when set, is forwarded to the provider as the maximum
 	// number of output tokens.
 	MaxTokens *int
+
+	// Tools lists the functions the model may call during this exchange.
+	// Requested calls come back in Response.Messages.
+	Tools []Tool
 
 	// Tag is free-form caller metadata carried through the loop. Hooks and
 	// processors can use it to correlate logs.

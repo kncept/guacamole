@@ -4,9 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"time"
 )
+
+// DefaultMaxToolRounds is the default bound on tool-call rounds in one Say.
+const DefaultMaxToolRounds = 10
 
 // Session is a stateful, multi-turn conversation built on top of a Loop.
 //
@@ -40,6 +45,14 @@ type Session struct {
 	// MaxTokens, when set, is forwarded to the provider on every request.
 	MaxTokens *int
 
+	// Tools lists the functions available to the model. Copied onto every
+	// request.
+	Tools []Tool
+
+	// MaxToolRounds bounds how many rounds of tool calls one Say executes
+	// before giving up. Zero uses DefaultMaxToolRounds.
+	MaxToolRounds int
+
 	messages []Message
 }
 
@@ -69,30 +82,94 @@ func newSessionID() string {
 // Say adds prompt to the history as a user message, runs the whole
 // conversation through the loop, and records the assistant's reply.
 //
-// If the run fails the history is left unchanged, so a failed turn can be
-// retried (or abandoned) without corrupting the conversation.
+// If the reply requests tool calls, Say executes them, appends the calls
+// and their results to the history, and runs the conversation again —
+// repeating until the model answers without tool calls, up to MaxToolRounds
+// rounds.
+//
+// If a run fails, the history keeps everything up to the last successful
+// round, so a failed turn can be retried (or abandoned) without corrupting
+// the conversation.
 func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 	history := make([]Message, 0, len(this.messages)+2)
 	history = append(history, this.messages...)
 	history = append(history, Message{Role: RoleUser, Content: prompt})
 
-	resp, err := this.Loop.Run(ctx, Request{
-		Model:        this.Model,
-		Messages:     history,
-		SystemPrompt: this.SystemPrompt,
-		Temperature:  this.Temperature,
-		MaxTokens:    this.MaxTokens,
-	})
-	if err != nil {
-		return Response{}, err
+	maxRounds := this.MaxToolRounds
+	if maxRounds <= 0 {
+		maxRounds = DefaultMaxToolRounds
 	}
 
-	if resp.Text != "" || len(resp.Messages) == 0 {
-		history = append(history, Message{Role: RoleAssistant, Content: resp.Text})
+	for round := 0; ; round++ {
+		resp, err := this.Loop.Run(ctx, Request{
+			Model:        this.Model,
+			Messages:     history,
+			SystemPrompt: this.SystemPrompt,
+			Temperature:  this.Temperature,
+			MaxTokens:    this.MaxTokens,
+			Tools:        this.Tools,
+		})
+		if err != nil {
+			return Response{}, err
+		}
+
+		if resp.Text != "" || len(resp.Messages) == 0 {
+			history = append(history, Message{Role: RoleAssistant, Content: resp.Text})
+		}
+		// Structured output items (e.g. tool calls) are part of the reply.
+		history = append(history, resp.Messages...)
+		this.messages = history
+
+		calls := toolCalls(resp.Messages)
+		if len(calls) == 0 {
+			return resp, nil
+		}
+		if round >= maxRounds {
+			return resp, fmt.Errorf("ai: stopped after %d tool rounds", maxRounds)
+		}
+		for _, call := range calls {
+			history = append(history, this.execute(ctx, call))
+		}
+		this.messages = history
 	}
-	// Structured output items (e.g. tool calls) are part of the reply too.
-	this.messages = append(history, resp.Messages...)
-	return resp, nil
+}
+
+// toolCalls extracts the tool calls requested in messages.
+func toolCalls(messages []Message) []Message {
+	var calls []Message
+	for _, m := range messages {
+		if m.Role == RoleAssistant && m.Name != "" {
+			calls = append(calls, m)
+		}
+	}
+	return calls
+}
+
+// execute runs one tool call and builds the tool result message. Handler
+// errors become the result content, so the model can see and recover from
+// them instead of the turn failing.
+func (this *Session) execute(ctx context.Context, call Message) Message {
+	result := Message{Role: RoleTool, Name: call.Name, ToolCallID: call.ToolCallID}
+
+	var tool *Tool
+	for i := range this.Tools {
+		if this.Tools[i].Name == call.Name {
+			tool = &this.Tools[i]
+			break
+		}
+	}
+	if tool == nil {
+		result.Content = fmt.Sprintf("error: unknown tool %q", call.Name)
+		return result
+	}
+
+	out, err := tool.Handler(ctx, json.RawMessage(call.ToolArguments))
+	if err != nil {
+		result.Content = "error: " + err.Error()
+	} else {
+		result.Content = out
+	}
+	return result
 }
 
 // Messages returns a copy of the conversation so far, oldest first.

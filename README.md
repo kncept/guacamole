@@ -7,15 +7,27 @@ Of course, it turned out that the bug in question _wasn't_ the issue, but hey, n
 
 ## Cool things
 
-1. Runs a chat session with history — saved to `./sessions/<session ID>.json` after every turn and resumable with `--ses <session ID>`
-2. Has an `ai` package that factors out the request/processing/response loop every AI tool runs
+1. Runs a chat session with history — saved to `~/.guac/session/<session ID>.json` after every turn and resumable with `--ses <session ID>`
+2. Tool use: the model can call `read_file`, `ls` and `write_file` to work with the local filesystem; every call is printed as it happens, and writes need your approval
+3. Has an `ai` package that factors out the request/processing/response loop every AI tool runs
 
 ## Sessions
 
-Every conversation is a session with a random ID. The session is saved after every turn to `./sessions/<session ID>.json`, and on exit (Ctrl-D or Ctrl-C) the save location and the `guacamole --session <session ID>` resume command are printed.
+Every conversation is a session with a random ID. The session is saved after every turn to `~/.guac/session/<session ID>.json`, and on exit (Ctrl-D or Ctrl-C) the save location and the `guacamole --session <session ID>` resume command are printed.
 
 - `/new` starts a fresh session with a new ID.
 - `--ses <session ID>` resumes a saved session; `-s` and `--session` are synonyms.
+
+## Permissions
+
+`write_file` needs your approval per directory. The first time the model tries to write into a directory you get a `[Y/n]` prompt:
+
+```
+→ write_file {"path":"notes/todo.md","content":"..."}
+Grant write access to /home/me/notes (and its subdirectories)? [Y/n]
+```
+
+Granting covers that directory and everything under it, forever: grants are persisted in `~/.guac/permissions.json`, so you are never asked twice about the same directory. Denying (or Ctrl-D) sends the error back to the model as the tool result, and it will be asked again next time.
 
 ## The `ai` package
 
@@ -41,15 +53,17 @@ resp, err := loop.Run(ctx, ai.Request{Prompt: "hello"})
 - `ai.Processor` — transforms or validates the final `Response`; may fail the attempt, which the loop then retries.
 - `ai.Loop` — `Run` executes request → processing → response, retrying transient failures and never retrying a cancelled context or an aborted stream.
 - `ai.Session` — a stateful conversation on top of a `Loop`: `Say` appends each user message to the history, sends the whole conversation, and records the reply. Failed turns leave the history untouched; `Clear` starts over. Every session has a random ID, and `sessionstore` saves/loads sessions as JSON files (`<dir>/<session ID>.json`).
+- `ai.Tool` — a function the model can call: name, description, JSON Schema parameters, and a `ToolHandler`. When a response requests tool calls, `Say` executes them, appends the calls and results to the history, and runs again until the model answers — up to `MaxToolRounds`. Handler errors become tool results so the model can recover. The `tools` package provides `read_file`, `ls` and `write_file`; `write_file` takes an `allowWrite` guard, which the `permissions` package implements with per-directory grants persisted to `~/.guac/permissions.json`.
 - Hooks: `OnRequest`, `OnChunk`, `OnResponse`, `OnError` for logging, debugging, and UIs.
 
 ```go
 session := ai.NewSession(loop)
+session.Tools = tools.FileSystem(nil) // nil allows all writes
 session.Say(ctx, "my name is Ada")
 resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history is sent with every turn
 ```
 
-The REPL (`promptrunner`) is built on top of it: each prompt goes through a streaming session and prints chunks as they arrive, so a conversation has memory until you type `/new`.
+The REPL (`promptrunner`) is built on top of it: each prompt goes through a streaming session and prints chunks as they arrive, so a conversation has memory until you type `/new`. Tool calls are printed as they run (e.g. `→ read_file {"path":"go.mod"}`).
 
 ## Cool things TODO
 

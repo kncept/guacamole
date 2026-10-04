@@ -1,6 +1,20 @@
 package config
 
-import "errors"
+import (
+	"errors"
+	"os"
+	"path/filepath"
+)
+
+// GuacDir returns guacamole's state directory: ~/.guac. Sessions and
+// permissions live under it.
+func GuacDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".guac"), nil
+}
 
 type ApiModelInterfaceDetails struct {
 	BaseUrl   string

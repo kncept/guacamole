@@ -1,25 +1,30 @@
 // Package promptrunner runs prompts through a streaming chat session,
-// printing the streamed results and saving the session to disk after each
-// turn.
+// printing the streamed results, saving the session to disk after each
+// turn, and guarding file writes behind user-granted permissions.
 package promptrunner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/permissions"
 	"github.com/kncept/guacamole/restfulai"
 	"github.com/kncept/guacamole/sessionstore"
+	"github.com/kncept/guacamole/tools"
 )
 
-// SessionsDir is where chat sessions are saved: ./sessions/<session ID>.json.
-const SessionsDir = "sessions"
-
-// thinkingMessage is shown while waiting for the model's first output.
-const thinkingMessage = "thinking..."
+// Sessions live at ~/.guac/session/<session ID>.json; permissions at
+// ~/.guac/permissions.json.
+const (
+	sessionsDirName     = "session"
+	permissionsFileName = "permissions.json"
+)
 
 type PromptRunner interface {
 	// RunPrompt sends one user message through the session, prints the
@@ -32,15 +37,17 @@ type PromptRunner interface {
 	// SessionID returns the current session's ID.
 	SessionID() string
 
-	// Save writes the current session to SessionsDir and returns the path
-	// written.
+	// Save writes the current session to the sessions directory and
+	// returns the path written.
 	Save() (string, error)
 }
 
 type promptRunner struct {
-	loop    *ai.Loop
-	model   string
-	session *ai.Session
+	loop        *ai.Loop
+	model       string
+	session     *ai.Session
+	sessionsDir string
+	perms       *permissions.Manager
 
 	// interactive reports whether stdin is a terminal. Only interactive
 	// runs get the "thinking..." indicator, so piped output stays clean.
@@ -49,13 +56,26 @@ type promptRunner struct {
 }
 
 // NewPromptRunner starts a chat session over conf's provider. If resumeID
-// is non-empty, the session with that ID is loaded from SessionsDir and
-// continues where it left off.
-func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (PromptRunner, error) {
+// is non-empty, the session with that ID is loaded from the sessions
+// directory and continues where it left off.
+//
+// ask prompts the user with a yes/no question (e.g. a permission request);
+// a nil ask denies everything that would need to ask.
+func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string, ask func(question string) bool) (PromptRunner, error) {
+	if ask == nil {
+		ask = func(string) bool { return false }
+	}
+
+	guacDir, err := config.GuacDir()
+	if err != nil {
+		return nil, err
+	}
+
 	provider := restfulai.NewRestfulAI(conf)
 
 	this := &promptRunner{
 		model:       conf.ModelName,
+		sessionsDir: filepath.Join(guacDir, sessionsDirName),
 		interactive: isTerminal(os.Stdin),
 	}
 
@@ -77,11 +97,27 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (Pr
 	}
 	this.loop = loop
 
+	perms, err := permissions.Load(filepath.Join(guacDir, permissionsFileName))
+	if err != nil {
+		return nil, err
+	}
+	perms.Ask = func(dir string) bool {
+		this.clearThinking()
+		granted := ask(fmt.Sprintf("Grant write access to %s (and its subdirectories)? [Y/n]", dir))
+		this.showThinking()
+		return granted
+	}
+	perms.OnError = func(err error) {
+		fmt.Printf("(warning: could not save permissions: %v)\n", err)
+	}
+	this.perms = perms
+
 	if resumeID != "" {
-		session, err := sessionstore.Load(SessionsDir, resumeID, loop)
+		session, err := sessionstore.Load(this.sessionsDir, resumeID, loop)
 		if err != nil {
 			return nil, err
 		}
+		session.Tools = this.tracedTools()
 		this.session = session
 		fmt.Printf("(resumed session %s: %d messages)\n", resumeID, len(session.Messages()))
 	} else {
@@ -112,6 +148,7 @@ func (this *promptRunner) RunPrompt(prompt string) error {
 func (this *promptRunner) Reset() {
 	this.session = ai.NewSession(this.loop)
 	this.session.Model = this.model
+	this.session.Tools = this.tracedTools()
 }
 
 func (this *promptRunner) SessionID() string {
@@ -119,7 +156,25 @@ func (this *promptRunner) SessionID() string {
 }
 
 func (this *promptRunner) Save() (string, error) {
-	return sessionstore.Save(SessionsDir, this.session)
+	return sessionstore.Save(this.sessionsDir, this.session)
+}
+
+// tracedTools wraps the file tools so every call is printed: tool activity
+// must be visible, otherwise a tool round looks like a hung prompt.
+func (this *promptRunner) tracedTools() []ai.Tool {
+	ts := tools.FileSystem(this.perms.AllowWrite)
+	for i := range ts {
+		name := ts[i].Name
+		handler := ts[i].Handler
+		ts[i].Handler = func(ctx context.Context, args json.RawMessage) (string, error) {
+			this.clearThinking()
+			fmt.Printf("→ %s %s\n", name, truncate(string(args), 80))
+			out, err := handler(ctx, args)
+			this.showThinking()
+			return out, err
+		}
+	}
+	return ts
 }
 
 // showThinking prints the "thinking..." indicator, once.
@@ -138,8 +193,19 @@ func (this *promptRunner) clearThinking() {
 	}
 }
 
+// thinkingMessage is shown while waiting for the model's first output.
+const thinkingMessage = "thinking..."
+
 // isTerminal reports whether f is a terminal (character device).
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// truncate shortens s to at most n bytes, appending "..." if cut.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n-3] + "..."
 }

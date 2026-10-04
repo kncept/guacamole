@@ -29,7 +29,7 @@ type guacamole struct {
 // cli is the command line. kong has no flag aliases, so the --ses synonyms
 // are separate fields resolved by firstNonEmpty.
 var cli struct {
-	Ses     string `name:"ses" short:"s" help:"Resume the saved session with this ID (saved under ./sessions/)."`
+	Ses     string `name:"ses" short:"s" help:"Resume the saved session with this ID (saved under ~/.guac/session/)."`
 	Session string `name:"session" help:"Synonym for --ses."`
 }
 
@@ -60,7 +60,11 @@ func firstNonEmpty(values ...string) string {
 }
 
 func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
-	promptRunner, err := promptrunner.NewPromptRunner(conf, resumeID)
+	// One stdin scanner, shared by the REPL and the [Y/n] permission
+	// prompts: a second stdin reader would swallow buffered input.
+	scanner := bufio.NewScanner(os.Stdin)
+
+	promptRunner, err := promptrunner.NewPromptRunner(conf, resumeID, askYesNo(scanner))
 	if err != nil {
 		fmt.Printf("Could not start session: %v\n", err)
 		os.Exit(1)
@@ -78,7 +82,6 @@ func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
 		os.Exit(0)
 	}()
 
-	scanner := bufio.NewScanner(os.Stdin)
 	for {
 		fmt.Print("Enter text: ")
 		if !scanner.Scan() {
@@ -119,4 +122,21 @@ func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
 // run.
 func printResumeHint(sessionID string) {
 	fmt.Printf("Resume with: guacamole --session %s\n", sessionID)
+}
+
+// askYesNo builds a [Y/n] prompter that reads answers through scanner.
+// Empty input means yes; EOF means no.
+func askYesNo(scanner *bufio.Scanner) func(question string) bool {
+	return func(question string) bool {
+		fmt.Printf("%s ", question)
+		if !scanner.Scan() {
+			fmt.Println()
+			return false
+		}
+		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
+		case "", "y", "yes":
+			return true
+		}
+		return false
+	}
 }

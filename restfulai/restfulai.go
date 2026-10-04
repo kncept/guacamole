@@ -83,6 +83,7 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 		Finished: finished,
 	}
 	if final != nil {
+		resp.Messages = outputMessages(final)
 		resp.Usage = ai.Usage{
 			InputTokens:  int(final.Usage.InputTokens),
 			OutputTokens: int(final.Usage.OutputTokens),
@@ -113,19 +114,21 @@ func (this *restfulAI) params(req ai.Request) responses.ResponseNewParams {
 	} else {
 		items := make(responses.ResponseInputParam, 0, len(messages))
 		for _, m := range messages {
-			items = append(items, responses.ResponseInputItemUnionParam{
-				OfMessage: &responses.EasyInputMessageParam{
-					Content: responses.EasyInputMessageContentUnionParam{
-						OfString: openai.String(m.Content),
-					},
-					Role: responses.EasyInputMessageRole(m.Role),
-					Type: responses.EasyInputMessageType("message"),
-				},
-			})
+			items = append(items, inputItem(m))
 		}
 		p.Input = responses.ResponseNewParamsInputUnion{
 			OfInputItemList: items,
 		}
+	}
+
+	if len(req.Tools) > 0 {
+		tools := make([]responses.ToolUnionParam, 0, len(req.Tools))
+		for _, t := range req.Tools {
+			tool := responses.ToolParamOfFunction(t.Name, t.Parameters, false)
+			tool.OfFunction.Description = openai.String(t.Description)
+			tools = append(tools, tool)
+		}
+		p.Tools = tools
 	}
 
 	if req.SystemPrompt != "" {
@@ -140,10 +143,51 @@ func (this *restfulAI) params(req ai.Request) responses.ResponseNewParams {
 	return p
 }
 
+// inputItem translates one history message into a Responses API input
+// item: a plain message, a function call, or a function call output.
+func inputItem(m ai.Message) responses.ResponseInputItemUnionParam {
+	switch {
+	case m.Role == ai.RoleAssistant && m.Name != "":
+		return responses.ResponseInputItemParamOfFunctionCall(m.ToolArguments, m.ToolCallID, m.Name)
+	case m.Role == ai.RoleTool:
+		item := responses.ResponseInputItemParamOfFunctionCallOutput(m.Content)
+		item.OfFunctionCallOutput.CallID = openai.String(m.ToolCallID)
+		return item
+	default:
+		return responses.ResponseInputItemUnionParam{
+			OfMessage: &responses.EasyInputMessageParam{
+				Content: responses.EasyInputMessageContentUnionParam{
+					OfString: openai.String(m.Content),
+				},
+				Role: responses.EasyInputMessageRole(m.Role),
+				Type: responses.EasyInputMessageType("message"),
+			},
+		}
+	}
+}
+
+// outputMessages extracts structured output items beyond the plain text —
+// currently function calls — from a raw response.
+func outputMessages(raw *responses.Response) []ai.Message {
+	var messages []ai.Message
+	for _, item := range raw.Output {
+		if item.Type == "function_call" {
+			messages = append(messages, ai.Message{
+				Role:          ai.RoleAssistant,
+				Name:          item.Name,
+				ToolCallID:    item.CallID,
+				ToolArguments: item.Arguments.OfString,
+			})
+		}
+	}
+	return messages
+}
+
 // toResponse normalizes a raw API response into an ai.Response.
 func toResponse(raw *responses.Response) ai.Response {
 	return ai.Response{
 		Text:     raw.OutputText(),
+		Messages: outputMessages(raw),
 		Finished: true,
 		Usage: ai.Usage{
 			InputTokens:  int(raw.Usage.InputTokens),
