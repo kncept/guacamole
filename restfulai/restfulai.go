@@ -1,0 +1,154 @@
+// Package restfulai implements ai.Provider for OpenAI-compatible REST
+// APIs, using the openai-go client's Responses API.
+package restfulai
+
+import (
+	"context"
+
+	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/config"
+	"github.com/openai/openai-go/v3"
+	openaiOption "github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/responses"
+)
+
+// RestfulAI is an ai.Provider backed by an OpenAI-compatible REST API.
+type RestfulAI interface {
+	ai.Provider
+}
+
+type restfulAI struct {
+	client *openai.Client
+	model  string
+}
+
+// NewRestfulAI builds a Provider from API connection details.
+func NewRestfulAI(conf *config.ApiModelInterfaceDetails) RestfulAI {
+	client := openai.NewClient(
+		openaiOption.WithBaseURL(conf.BaseUrl),
+		openaiOption.WithAPIKey(conf.ApiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
+	)
+
+	return &restfulAI{
+		client: &client,
+		model:  conf.ModelName,
+	}
+}
+
+// Send performs one non-streaming exchange.
+func (this *restfulAI) Send(ctx context.Context, req ai.Request) (ai.Response, error) {
+	raw, err := this.client.Responses.New(ctx, this.params(req))
+	if err != nil {
+		return ai.Response{}, err
+	}
+	return toResponse(raw), nil
+}
+
+// SendStream performs a streaming exchange, calling onChunk for every text
+// delta as it arrives. A non-nil return from onChunk aborts the stream.
+func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk func(ai.Chunk) error) (ai.Response, error) {
+	stream := this.client.Responses.NewStreaming(ctx, this.params(req))
+
+	var (
+		text     string
+		final    *responses.Response
+		finished bool
+	)
+	for stream.Next() {
+		event := stream.Current()
+		switch event.Type {
+		case "response.output_text.delta":
+			if onChunk != nil {
+				if err := onChunk(ai.Chunk{Delta: event.Delta}); err != nil {
+					stream.Close()
+					return ai.Response{}, err
+				}
+			}
+			text += event.Delta
+		case "response.completed":
+			final = &event.Response
+			finished = true
+		case "response.incomplete":
+			// Cut short (e.g. token limit); the partial response is still useful.
+			final = &event.Response
+			finished = false
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return ai.Response{}, err
+	}
+
+	resp := ai.Response{
+		Text:     text,
+		Finished: finished,
+	}
+	if final != nil {
+		resp.Usage = ai.Usage{
+			InputTokens:  int(final.Usage.InputTokens),
+			OutputTokens: int(final.Usage.OutputTokens),
+		}
+		resp.Raw = final
+	}
+	return resp, nil
+}
+
+// params translates a normalized ai.Request into openai-go request params.
+func (this *restfulAI) params(req ai.Request) responses.ResponseNewParams {
+	model := req.Model
+	if model == "" {
+		model = this.model
+	}
+
+	messages := req.Conversation()
+	p := responses.ResponseNewParams{
+		Model: model,
+	}
+
+	// A lone user message goes on the wire as a plain string; anything
+	// richer (multi-turn, tool messages) goes as an item list.
+	if len(messages) == 1 && messages[0].Role == ai.RoleUser {
+		p.Input = responses.ResponseNewParamsInputUnion{
+			OfString: openai.String(messages[0].Content),
+		}
+	} else {
+		items := make(responses.ResponseInputParam, 0, len(messages))
+		for _, m := range messages {
+			items = append(items, responses.ResponseInputItemUnionParam{
+				OfMessage: &responses.EasyInputMessageParam{
+					Content: responses.EasyInputMessageContentUnionParam{
+						OfString: openai.String(m.Content),
+					},
+					Role: responses.EasyInputMessageRole(m.Role),
+					Type: responses.EasyInputMessageType("message"),
+				},
+			})
+		}
+		p.Input = responses.ResponseNewParamsInputUnion{
+			OfInputItemList: items,
+		}
+	}
+
+	if req.SystemPrompt != "" {
+		p.Instructions = openai.String(req.SystemPrompt)
+	}
+	if req.Temperature != nil {
+		p.Temperature = openai.Float(*req.Temperature)
+	}
+	if req.MaxTokens != nil {
+		p.MaxOutputTokens = openai.Int(int64(*req.MaxTokens))
+	}
+	return p
+}
+
+// toResponse normalizes a raw API response into an ai.Response.
+func toResponse(raw *responses.Response) ai.Response {
+	return ai.Response{
+		Text:     raw.OutputText(),
+		Finished: true,
+		Usage: ai.Usage{
+			InputTokens:  int(raw.Usage.InputTokens),
+			OutputTokens: int(raw.Usage.OutputTokens),
+		},
+		Raw: raw,
+	}
+}
