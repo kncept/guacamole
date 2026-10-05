@@ -4,6 +4,8 @@ package restfulai
 
 import (
 	"context"
+	"fmt"
+	"log"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
@@ -18,35 +20,69 @@ type RestfulAI interface {
 }
 
 type restfulAI struct {
-	client *openai.Client
-	model  string
+	client  *openai.Client
+	baseURL string
+	model   string
 }
 
-// NewRestfulAI builds a Provider from API connection details.
-func NewRestfulAI(conf *config.ApiModelInterfaceDetails) RestfulAI {
+// NewRestfulAI builds a Provider from API connection details. It fails fast
+// on missing connection details: a client with an empty base URL would POST
+// to a bare path and every request would die with "unsupported protocol
+// scheme", far from the real cause.
+func NewRestfulAI(conf *config.ApiModelInterfaceDetails) (RestfulAI, error) {
+	if conf.BaseUrl == "" {
+		return nil, fmt.Errorf("restfulai: no base URL for model %q; set options.baseURL on the provider in the opencode config", conf.ModelName)
+	}
+
 	client := openai.NewClient(
 		openaiOption.WithBaseURL(conf.BaseUrl),
 		openaiOption.WithAPIKey(conf.ApiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
 	)
-
-	return &restfulAI{
-		client: &client,
-		model:  conf.ModelName,
+	this := &restfulAI{
+		client:  &client,
+		baseURL: conf.BaseUrl,
+		model:   conf.ModelName,
 	}
+	log.Printf("restfulai: ready: base URL %s, model %s, api key %s",
+		conf.BaseUrl, conf.ModelName, apiKeyStatus(conf.ApiKey))
+	return this, nil
+}
+
+// logRequest records what is about to be sent, so a failure can be traced
+// back to the exact endpoint and request it came from.
+func (this *restfulAI) logRequest(kind string, req ai.Request) {
+	model := req.Model
+	if model == "" {
+		model = this.model
+	}
+	log.Printf("restfulai: %s: POST %s/responses model=%s messages=%d tools=%d",
+		kind, this.baseURL, model, len(req.Conversation()), len(req.Tools))
+}
+
+// apiKeyStatus says whether a key is present without printing it.
+func apiKeyStatus(key string) string {
+	if key == "" {
+		return "unset (falls back to $OPENAI_API_KEY)"
+	}
+	return "set"
 }
 
 // Send performs one non-streaming exchange.
 func (this *restfulAI) Send(ctx context.Context, req ai.Request) (ai.Response, error) {
+	this.logRequest("send", req)
 	raw, err := this.client.Responses.New(ctx, this.params(req))
 	if err != nil {
-		return ai.Response{}, err
+		return ai.Response{}, fmt.Errorf("restfulai: POST %s/responses: %w", this.baseURL, err)
 	}
+	log.Printf("restfulai: response ok: %d input, %d output tokens",
+		raw.Usage.InputTokens, raw.Usage.OutputTokens)
 	return toResponse(raw), nil
 }
 
 // SendStream performs a streaming exchange, calling onChunk for every text
 // delta as it arrives. A non-nil return from onChunk aborts the stream.
 func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk func(ai.Chunk) error) (ai.Response, error) {
+	this.logRequest("stream", req)
 	stream := this.client.Responses.NewStreaming(ctx, this.params(req))
 
 	var (
@@ -75,8 +111,10 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return ai.Response{}, err
+		return ai.Response{}, fmt.Errorf("restfulai: POST %s/responses (stream): %w", this.baseURL, err)
 	}
+
+	log.Printf("restfulai: stream done: %d chars, complete=%v", len(text), finished)
 
 	resp := ai.Response{
 		Text:     text,
@@ -89,6 +127,8 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 			OutputTokens: int(final.Usage.OutputTokens),
 		}
 		resp.Raw = final
+		log.Printf("restfulai: usage: %d input, %d output tokens",
+			final.Usage.InputTokens, final.Usage.OutputTokens)
 	}
 	return resp, nil
 }

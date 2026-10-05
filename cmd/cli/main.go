@@ -60,11 +60,10 @@ func firstNonEmpty(values ...string) string {
 }
 
 func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
-	// One stdin scanner, shared by the REPL and the [Y/n] permission
-	// prompts: a second stdin reader would swallow buffered input.
+	// One stdin scanner shared by the REPL.
 	scanner := bufio.NewScanner(os.Stdin)
 
-	promptRunner, err := promptrunner.NewPromptRunner(conf, resumeID, askYesNo(scanner))
+	promptRunner, err := promptrunner.NewPromptRunner(conf, resumeID)
 	if err != nil {
 		fmt.Printf("Could not start session: %v\n", err)
 		os.Exit(1)
@@ -126,21 +125,4 @@ func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
 // run.
 func printResumeHint(sessionID string) {
 	fmt.Printf("Resume with: guacamole --session %s\n", sessionID)
-}
-
-// askYesNo builds a [Y/n] prompter that reads answers through scanner.
-// Empty input means yes; EOF means no.
-func askYesNo(scanner *bufio.Scanner) func(question string) bool {
-	return func(question string) bool {
-		fmt.Printf("%s ", question)
-		if !scanner.Scan() {
-			fmt.Println()
-			return false
-		}
-		switch strings.ToLower(strings.TrimSpace(scanner.Text())) {
-		case "", "y", "yes":
-			return true
-		}
-		return false
-	}
 }

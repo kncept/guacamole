@@ -8,11 +8,15 @@ import (
 )
 
 func testProvider() *restfulAI {
-	return NewRestfulAI(&config.ApiModelInterfaceDetails{
+	p, err := NewRestfulAI(&config.ApiModelInterfaceDetails{
 		BaseUrl:   "http://localhost:0",
 		ApiKey:    "test",
 		ModelName: "m1",
-	}).(*restfulAI)
+	})
+	if err != nil {
+		panic(err)
+	}
+	return p.(*restfulAI)
 }
 
 func TestParamsTools(t *testing.T) {

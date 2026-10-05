@@ -19,9 +19,8 @@ import (
 const maxReadBytes = 64 * 1024
 
 // FileSystem returns all the file tools: read_file, ls and write_file.
-// allowWrite is passed to WriteFile; nil allows all writes.
-func FileSystem(allowWrite func(dir string) bool) []ai.Tool {
-	return []ai.Tool{ReadFile(), Ls(), WriteFile(allowWrite)}
+func FileSystem() []ai.Tool {
+	return []ai.Tool{ReadFile(), Ls(), WriteFile()}
 }
 
 // ReadFile returns a tool that reads the contents of a file.
@@ -64,10 +63,7 @@ func Ls() ai.Tool {
 
 // WriteFile returns a tool that writes content to a file, creating parent
 // directories as needed.
-//
-// The allowWrite callback is consulted with the absolute target directory
-// before every write; nil allows all writes.
-func WriteFile(allowWrite func(dir string) bool) ai.Tool {
+func WriteFile() ai.Tool {
 	return ai.Tool{
 		Name:        "write_file",
 		Description: "Write content to a file, creating parent directories as needed.",
@@ -85,27 +81,7 @@ func WriteFile(allowWrite func(dir string) bool) ai.Tool {
 			},
 			"required": []string{"path", "content"},
 		},
-		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
-			if allowWrite != nil {
-				var a struct {
-					Path string `json:"path"`
-				}
-				if err := json.Unmarshal(args, &a); err != nil {
-					return "", err
-				}
-				if a.Path == "" {
-					return "", errors.New("path is required")
-				}
-				dir, err := filepath.Abs(filepath.Dir(a.Path))
-				if err != nil {
-					return "", err
-				}
-				if !allowWrite(dir) {
-					return "", fmt.Errorf("write access to %s denied", dir)
-				}
-			}
-			return writeFile(ctx, args)
-		},
+		Handler: writeFile,
 	}
 }
 

@@ -1,29 +1,27 @@
 // Package promptrunner runs prompts through a streaming chat session,
-// printing the streamed results, saving the session to disk after each
-// turn, and guarding file writes behind user-granted permissions.
+// printing the streamed results, and saving the session to disk after each
+// turn.
 package promptrunner
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
-	"github.com/kncept/guacamole/permissions"
 	"github.com/kncept/guacamole/restfulai"
 	"github.com/kncept/guacamole/sessionstore"
 	"github.com/kncept/guacamole/tools"
 )
 
-// Sessions live at ~/.guac/session/<session ID>.json; permissions at
-// ~/.guac/permissions.json.
+// Sessions live at ~/.guac/session/<session ID>.json.
 const (
-	sessionsDirName     = "session"
-	permissionsFileName = "permissions.json"
+	sessionsDirName = "session"
 )
 
 type PromptRunner interface {
@@ -47,7 +45,6 @@ type promptRunner struct {
 	model       string
 	session     *ai.Session
 	sessionsDir string
-	perms       *permissions.Manager
 
 	// interactive reports whether stdin is a terminal. Only interactive
 	// runs get the "thinking..." indicator, so piped output stays clean.
@@ -58,20 +55,16 @@ type promptRunner struct {
 // NewPromptRunner starts a chat session over conf's provider. If resumeID
 // is non-empty, the session with that ID is loaded from the sessions
 // directory and continues where it left off.
-//
-// ask prompts the user with a yes/no question (e.g. a permission request);
-// a nil ask denies everything that would need to ask.
-func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string, ask func(question string) bool) (PromptRunner, error) {
-	if ask == nil {
-		ask = func(string) bool { return false }
-	}
-
+func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (PromptRunner, error) {
 	guacDir, err := config.GuacDir()
 	if err != nil {
 		return nil, err
 	}
 
-	provider := restfulai.NewRestfulAI(conf)
+	provider, err := restfulai.NewRestfulAI(conf)
+	if err != nil {
+		return nil, err
+	}
 
 	this := &promptRunner{
 		model:       conf.ModelName,
@@ -86,31 +79,23 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string, ask
 		fmt.Print(chunk.Delta)
 		return nil
 	}
+	loop.OnRequest = func(req ai.Request) {
+		log.Printf("promptrunner: sending request: model %s, %d message(s), %d tool(s)",
+			req.Model, len(req.Messages), len(req.Tools))
+	}
 	loop.OnError = func(err error, attempt int) {
 		// Failed attempts must be visible: silent retries look like the
 		// prompt was ignored.
 		this.clearThinking()
-		if attempt <= loop.Retries {
-			fmt.Printf("(attempt %d failed: %v; retrying)\n", attempt, err)
+		total := loop.Retries + 1
+		if attempt < total {
+			fmt.Printf("(attempt %d of %d failed: %v; retrying)\n", attempt, total, err)
 			this.showThinking()
+		} else {
+			fmt.Printf("(attempt %d of %d failed: %v)\n", attempt, total, err)
 		}
 	}
 	this.loop = loop
-
-	perms, err := permissions.Load(filepath.Join(guacDir, permissionsFileName))
-	if err != nil {
-		return nil, err
-	}
-	perms.Ask = func(dir string) bool {
-		this.clearThinking()
-		granted := ask(fmt.Sprintf("Grant write access to %s (and its subdirectories)? [Y/n]", dir))
-		this.showThinking()
-		return granted
-	}
-	perms.OnError = func(err error) {
-		fmt.Printf("(warning: could not save permissions: %v)\n", err)
-	}
-	this.perms = perms
 
 	if resumeID != "" {
 		session, err := sessionstore.Load(this.sessionsDir, resumeID, loop)
@@ -162,7 +147,7 @@ func (this *promptRunner) Save() (string, error) {
 // tracedTools wraps the file tools so every call is printed: tool activity
 // must be visible, otherwise a tool round looks like a hung prompt.
 func (this *promptRunner) tracedTools() []ai.Tool {
-	ts := tools.FileSystem(this.perms.AllowWrite)
+	ts := append(tools.FileSystem(), tools.Console()...)
 	for i := range ts {
 		name := ts[i].Name
 		handler := ts[i].Handler

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -119,11 +120,32 @@ func (st *sessionTab) session() *ai.Session {
 // loopProvider builds the REST provider for the session's selected model.
 func (st *sessionTab) loopProvider() ai.Provider {
 	opt := st.selectedModel()
-	return restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
+	provider, err := restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
 		BaseUrl:   opt.BaseURL,
 		ApiKey:    opt.APIKey,
 		ModelName: opt.ModelID,
 	})
+	if err != nil {
+		// The GUI keeps running: prompts with this model surface the error
+		// in the chat instead of crashing the app.
+		log.Printf("app: %v", err)
+		return errorProvider{err: err}
+	}
+	return provider
+}
+
+// errorProvider is an ai.Provider that fails every exchange with err, used
+// when a selected model has no usable connection details.
+type errorProvider struct {
+	err error
+}
+
+func (e errorProvider) Send(ctx context.Context, req ai.Request) (ai.Response, error) {
+	return ai.Response{}, e.err
+}
+
+func (e errorProvider) SendStream(ctx context.Context, req ai.Request, onChunk func(ai.Chunk) error) (ai.Response, error) {
+	return ai.Response{}, e.err
 }
 
 func (st *sessionTab) selectedModel() config.ModelOption {

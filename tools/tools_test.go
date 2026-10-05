@@ -121,30 +121,3 @@ func TestWriteFileEmptyPath(t *testing.T) {
 		t.Fatal("writeFile: expected error for empty path, got nil")
 	}
 }
-
-func TestWriteFileGuard(t *testing.T) {
-	target := filepath.Join(t.TempDir(), "sub", "out.txt")
-	guarded := WriteFile(func(dir string) bool { return false })
-
-	if _, err := run(t, guarded.Handler, `{"path": "`+path(target)+`", "content": "x"}`); err == nil {
-		t.Fatal("guarded writeFile: expected a denial error, got nil")
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Error("denied write still created the file")
-	}
-}
-
-func TestWriteFileGuardChecksDirectory(t *testing.T) {
-	dir := t.TempDir()
-	target := filepath.Join(dir, "out.txt")
-
-	var gotDir string
-	guarded := WriteFile(func(dir string) bool { gotDir = dir; return true })
-
-	if _, err := run(t, guarded.Handler, `{"path": "`+path(target)+`", "content": "x"}`); err != nil {
-		t.Fatalf("guarded writeFile: %v", err)
-	}
-	if gotDir != dir {
-		t.Errorf("guard dir = %q, want %q", gotDir, dir)
-	}
-}

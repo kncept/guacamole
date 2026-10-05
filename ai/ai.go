@@ -20,7 +20,7 @@
 //
 // Typical use:
 //
-//	provider := restfulai.NewRestfulAI(conf)
+//	provider, err := restfulai.NewRestfulAI(conf)
 //	loop := ai.NewLoop(provider)
 //	loop.Stream = true
 //	loop.OnChunk = func(c ai.Chunk) error { fmt.Print(c.Delta); return nil }
