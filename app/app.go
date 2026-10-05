@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -8,6 +9,10 @@ import (
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+
+	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/restfulai"
 )
 
 // chat represents a single chat session with its own output log and input field.
@@ -16,14 +21,18 @@ type chat struct {
 	output   *widget.Label
 	input    *widget.Entry
 	messages []string
+	session  *ai.Session
 }
 
 // sessionTab bundles a chat session with its tab item and the tab container
 // it lives in, so a session always knows where it is displayed.
 type sessionTab struct {
-	chat *chat
-	tab  *container.TabItem
-	tabs *container.DocTabs
+	chat     *chat
+	tab      *container.TabItem
+	tabs     *container.DocTabs
+	guac     *Guac
+	banner   fyne.CanvasObject
+	modelSel *widget.Select
 }
 
 // Guac holds the state and references for the Guacamole GUI application.
@@ -35,6 +44,7 @@ type Guac struct {
 	sessions  []*sessionTab
 	activeIdx int
 	count     int // monotonic counter for naming sessions
+	models    []config.ModelOption
 }
 
 // New creates and initializes a new Guac GUI application.
@@ -43,6 +53,7 @@ func New() *Guac {
 	w := a.NewWindow("Guacamole GUI")
 
 	g := &Guac{a: a, w: w, count: 0}
+	g.models, _ = config.AllModelOptions()
 	g.tabs = container.NewDocTabs()
 	g.tabs.CloseIntercept = g.onTabClosed
 	g.tabs.OnSelected = g.onTabSelected
@@ -68,21 +79,79 @@ func (g *Guac) Run() {
 
 func (g *Guac) newSessionTab() *sessionTab {
 	g.count++
-	return &sessionTab{
-		chat: &chat{
-			id:       fmt.Sprintf("Session %d", g.count),
-			output:   widget.NewLabel(""),
-			input:    widget.NewEntry(),
-			messages: []string{},
-		},
-		tabs: g.tabs,
+	c := &chat{
+		id:     fmt.Sprintf("Session %d", g.count),
+		output: widget.NewLabel(""),
+		input:  widget.NewEntry(),
+	}
+	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
+	st.modelSel = widget.NewSelect(g.modelLabels(), func(selected string) {
+		g.onModelChanged(st, selected)
+	})
+	if len(g.models) > 0 {
+		st.modelSel.SetSelected(g.models[0].Label())
+	}
+	st.session() // create ai.Session with the selected model
+	st.banner = container.NewHBox(widget.NewLabel("Provider / Model:"), st.modelSel)
+	return st
+}
+
+func (g *Guac) modelLabels() []string {
+	labels := make([]string, 0, len(g.models))
+	for _, m := range g.models {
+		labels = append(labels, m.Label())
+	}
+	return labels
+}
+
+// session returns the session's ai.Session, creating it if needed.
+func (st *sessionTab) session() *ai.Session {
+	if st.chat.session == nil {
+		loop := ai.NewLoop(st.loopProvider())
+		loop.Stream = true
+		sess := ai.NewSession(loop)
+		sess.Model = st.selectedModel().ModelID
+		st.chat.session = sess
+	}
+	return st.chat.session
+}
+
+// loopProvider builds the REST provider for the session's selected model.
+func (st *sessionTab) loopProvider() ai.Provider {
+	opt := st.selectedModel()
+	return restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
+		BaseUrl:   opt.BaseURL,
+		ApiKey:    opt.APIKey,
+		ModelName: opt.ModelID,
+	})
+}
+
+func (st *sessionTab) selectedModel() config.ModelOption {
+	for _, m := range st.guac.models {
+		if m.Label() == st.modelSel.Selected {
+			return m
+		}
+	}
+	return config.ModelOption{}
+}
+
+func (g *Guac) onModelChanged(st *sessionTab, label string) {
+	for _, m := range g.models {
+		if m.Label() == label {
+			sess := st.session()
+			loop := ai.NewLoop(st.loopProvider())
+			loop.Stream = true
+			sess.Loop = loop
+			sess.Model = m.ModelID
+			return
+		}
 	}
 }
 
 // refreshContent rebuilds the window content with the active session's input box.
 func (g *Guac) refreshContent() {
 	inputBox := g.createInputBox(g.sessions[g.activeIdx].chat.input)
-	g.w.SetContent(container.NewVBox(g.tabs, inputBox))
+	g.w.SetContent(container.NewBorder(nil, inputBox, nil, nil, g.tabs))
 	g.w.Resize(fyne.NewSize(600, 400))
 }
 
@@ -92,26 +161,49 @@ func (g *Guac) createInputBox(activeInput *widget.Entry) *fyne.Container {
 		if strings.TrimSpace(text) == "" {
 			return
 		}
-		g.addMessageToActive(text)
-		activeInput.SetText("")
+		g.runPrompt(activeInput, text)
 	})
 
 	return container.NewBorder(nil, nil, nil, submitBtn, activeInput)
 }
 
+// runPrompt sends the prompt through the active session's AI loop, streaming
+// the reply into the session log.
+func (g *Guac) runPrompt(activeInput *widget.Entry, text string) {
+	st := g.sessions[g.activeIdx]
+	st.chat.messages = append(st.chat.messages, "You: "+text)
+	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+	activeInput.SetText("")
+
+	go func() {
+		var reply strings.Builder
+		sess := st.session()
+		loop := sess.Loop
+		loop.OnChunk = func(chunk ai.Chunk) error {
+			reply.WriteString(chunk.Delta)
+			fyne.Do(func() {
+				st.chat.output.SetText(strings.Join(st.chat.messages, "\n") + "\nAI: " + reply.String())
+			})
+			return nil
+		}
+		_, err := sess.Say(context.Background(), text)
+		fyne.Do(func() {
+			if err != nil {
+				st.chat.messages = append(st.chat.messages, "Error: "+err.Error())
+			} else {
+				st.chat.messages = append(st.chat.messages, "AI: "+reply.String())
+			}
+			st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+		})
+	}()
+}
+
 // updateTab creates/refreshes the tab item for the session and appends it to its container.
 func (g *Guac) updateTab(st *sessionTab) {
 	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	st.tab = container.NewTabItem(st.chat.id, st.chat.output)
+	log := container.NewBorder(st.banner, nil, nil, nil, container.NewVScroll(st.chat.output))
+	st.tab = container.NewTabItem(st.chat.id, log)
 	st.tabs.Append(st.tab)
-}
-
-// addMessageToActive appends a prompt to the active session's output.
-func (g *Guac) addMessageToActive(text string) {
-	s := g.sessions[g.activeIdx].chat
-	s.messages = append(s.messages, text)
-	s.output.SetText(strings.Join(s.messages, "\n"))
-	fmt.Printf("[%s] %s\n", s.id, text)
 }
 
 // onTabClosed handles the X button on a tab.
