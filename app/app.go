@@ -178,15 +178,79 @@ func (g *Guac) refreshContent() {
 }
 
 func (g *Guac) createInputBox(activeInput *widget.Entry) *fyne.Container {
-	submitBtn := widget.NewButton("Submit", func() {
+	// Enable multi-line mode so that Enter inserts a newline instead of submitting.
+	activeInput.MultiLine = true
+
+	// Submit handler: called from the submit button and keyboard shortcuts.
+	submit := func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		g.runPrompt(activeInput, text)
+	}
+
+	// Submit button for mouse users; pressing it triggers submission.
+	submmitBtn := widget.NewButton("Submit", func() {
 		text := activeInput.Text
 		if strings.TrimSpace(text) == "" {
 			return
 		}
-		g.runPrompt(activeInput, text)
+		submit(text)
 	})
 
-	return container.NewBorder(nil, nil, nil, submitBtn, activeInput)
+	// Register keyboard shortcuts for Cmd+Enter (macOS) and Ctrl+Enter (Windows/Linux)
+	// on the window canvas so they are detected regardless of focus within the GUI.
+	g.w.Canvas().AddShortcut(&shortcutReturnSuper{}, func(s fyne.Shortcut) {
+		text := activeInput.Text
+		if strings.TrimSpace(text) != "" {
+			submit(text)
+		}
+	})
+	g.w.Canvas().AddShortcut(&shortcutReturnCtrl{}, func(s fyne.Shortcut) {
+		text := activeInput.Text
+		if strings.TrimSpace(text) != "" {
+			submit(text)
+		}
+	})
+
+	return container.NewBorder(nil, nil, nil, submmitBtn, activeInput)
+}
+
+// shortcutReturnSuper is a keyboard shortcut for Cmd+Enter (macOS).
+type shortcutReturnSuper struct{}
+
+// ShortcutName returns the name of this shortcut.
+func (s *shortcutReturnSuper) ShortcutName() string {
+	return "returnSuper"
+}
+
+// Key returns the key name for this shortcut.
+func (s *shortcutReturnSuper) Key() fyne.KeyName {
+	return fyne.KeyReturn
+}
+
+// Mod returns the key modifier for this shortcut (Super = Cmd on macOS).
+func (s *shortcutReturnSuper) Mod() fyne.KeyModifier {
+	return fyne.KeyModifierSuper
+}
+
+// shortcutReturnCtrl is a keyboard shortcut for Ctrl+Enter (Windows/Linux).
+type shortcutReturnCtrl struct{}
+
+// ShortcutName returns the name of this shortcut.
+func (s *shortcutReturnCtrl) ShortcutName() string {
+	return "returnCtrl"
+}
+
+// Key returns the key name for this shortcut.
+func (s *shortcutReturnCtrl) Key() fyne.KeyName {
+	return fyne.KeyReturn
+}
+
+// Mod returns the key modifier for this shortcut (Control = Ctrl on Windows/Linux).
+func (s *shortcutReturnCtrl) Mod() fyne.KeyModifier {
+	return fyne.KeyModifierControl
 }
 
 // runPrompt sends the prompt through the active session's AI loop, streaming
