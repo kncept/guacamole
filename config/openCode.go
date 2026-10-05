@@ -49,7 +49,14 @@ func openCodeParseFile(path string) (*ApiModelInterfaceDetails, error) {
 		panic(err)
 	}
 
-	// fmt.Printf("%+v\n", conf)
+	// Check top-level model field first
+	if conf.Model != "" {
+		return &ApiModelInterfaceDetails{
+			ModelName: conf.Model,
+		}, nil
+	}
+
+	// Fall back to provider models
 	for _, provider := range conf.Providers {
 		if provider.Options != nil {
 			for modelId, _ := range provider.Models {
@@ -70,7 +77,8 @@ type json_OpenCode_options struct {
 	ApiKey  string `json:"apiKey"`
 }
 type json_OpenCode_V1 struct {
-	Schema    string                               `json:"$schema"`
+	Model    string                               `json:"model"`
+	Schema   string                               `json:"$schema"`
 	Providers map[string]json_OpenCode_V1_provider `json:"provider"`
 }
 type json_OpenCode_V1_provider struct {

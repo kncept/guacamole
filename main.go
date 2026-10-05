@@ -83,7 +83,11 @@ func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
 	}()
 
 	for {
-		fmt.Print("Enter text: ")
+		modelLabel := ""
+	if conf.ModelName != "" {
+		modelLabel = fmt.Sprintf(" (model: %s)", conf.ModelName)
+	}
+	fmt.Printf("Enter text%s: ", modelLabel)
 		if !scanner.Scan() {
 			// EOF (Ctrl-D): end the session.
 			fmt.Println()
