@@ -14,6 +14,7 @@ import (
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
 	"github.com/kncept/guacamole/restfulai"
+	"github.com/kncept/guacamole/tools"
 )
 
 // chat represents a single chat session with its own output log and input field.
@@ -112,6 +113,7 @@ func (st *sessionTab) session() *ai.Session {
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
+		sess.Tools = tools.AllTools()
 		st.chat.session = sess
 	}
 	return st.chat.session

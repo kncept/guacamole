@@ -147,7 +147,7 @@ func (this *promptRunner) Save() (string, error) {
 // tracedTools wraps the file tools so every call is printed: tool activity
 // must be visible, otherwise a tool round looks like a hung prompt.
 func (this *promptRunner) tracedTools() []ai.Tool {
-	ts := append(tools.FileSystem(), tools.Console()...)
+	ts := tools.AllTools()
 	for i := range ts {
 		name := ts[i].Name
 		handler := ts[i].Handler
