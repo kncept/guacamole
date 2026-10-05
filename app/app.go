@@ -1,0 +1,199 @@
+package app
+
+import (
+	"fmt"
+	"strings"
+
+	"fyne.io/fyne/v2"
+	fyneapp "fyne.io/fyne/v2/app"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/widget"
+)
+
+// chat represents a single chat session with its own output log and input field.
+type chat struct {
+	id       string
+	output   *widget.Label
+	input    *widget.Entry
+	messages []string
+}
+
+// sessionTab bundles a chat session with its tab item and the tab container
+// it lives in, so a session always knows where it is displayed.
+type sessionTab struct {
+	chat *chat
+	tab  *container.TabItem
+	tabs *container.DocTabs
+}
+
+// Guac holds the state and references for the Guacamole GUI application.
+type Guac struct {
+	a         fyne.App
+	w         fyne.Window
+	tabs      *container.DocTabs
+	newTab    *container.TabItem
+	sessions  []*sessionTab
+	activeIdx int
+	count     int // monotonic counter for naming sessions
+}
+
+// New creates and initializes a new Guac GUI application.
+func New() *Guac {
+	a := fyneapp.New()
+	w := a.NewWindow("Guacamole GUI")
+
+	g := &Guac{a: a, w: w, count: 0}
+	g.tabs = container.NewDocTabs()
+	g.tabs.CloseIntercept = g.onTabClosed
+	g.tabs.OnSelected = g.onTabSelected
+
+	g.sessions = append(g.sessions, g.newSessionTab())
+	g.activeIdx = 0
+	g.updateTab(g.sessions[g.activeIdx])
+
+	// "New Session" tab — always rightmost, creates a new session when clicked.
+	g.newTab = container.NewTabItem("New Session", widget.NewLabel("Click to create new session"))
+	g.tabs.Append(g.newTab)
+
+	g.buildMenu()
+	g.refreshContent()
+	g.w.Resize(fyne.NewSize(600, 400))
+	return g
+}
+
+// Run shows the window and starts the event loop.
+func (g *Guac) Run() {
+	g.w.ShowAndRun()
+}
+
+func (g *Guac) newSessionTab() *sessionTab {
+	g.count++
+	return &sessionTab{
+		chat: &chat{
+			id:       fmt.Sprintf("Session %d", g.count),
+			output:   widget.NewLabel(""),
+			input:    widget.NewEntry(),
+			messages: []string{},
+		},
+		tabs: g.tabs,
+	}
+}
+
+// refreshContent rebuilds the window content with the active session's input box.
+func (g *Guac) refreshContent() {
+	inputBox := g.createInputBox(g.sessions[g.activeIdx].chat.input)
+	g.w.SetContent(container.NewVBox(g.tabs, inputBox))
+	g.w.Resize(fyne.NewSize(600, 400))
+}
+
+func (g *Guac) createInputBox(activeInput *widget.Entry) *fyne.Container {
+	submitBtn := widget.NewButton("Submit", func() {
+		text := activeInput.Text
+		if strings.TrimSpace(text) == "" {
+			return
+		}
+		g.addMessageToActive(text)
+		activeInput.SetText("")
+	})
+
+	return container.NewBorder(nil, nil, nil, submitBtn, activeInput)
+}
+
+// updateTab creates/refreshes the tab item for the session and appends it to its container.
+func (g *Guac) updateTab(st *sessionTab) {
+	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+	st.tab = container.NewTabItem(st.chat.id, st.chat.output)
+	st.tabs.Append(st.tab)
+}
+
+// addMessageToActive appends a prompt to the active session's output.
+func (g *Guac) addMessageToActive(text string) {
+	s := g.sessions[g.activeIdx].chat
+	s.messages = append(s.messages, text)
+	s.output.SetText(strings.Join(s.messages, "\n"))
+	fmt.Printf("[%s] %s\n", s.id, text)
+}
+
+// onTabClosed handles the X button on a tab.
+func (g *Guac) onTabClosed(item *container.TabItem) {
+	if item.Text == "New Session" {
+		return
+	}
+	sessIdx := -1
+	for i, st := range g.sessions {
+		if st.tab == item {
+			sessIdx = i
+			break
+		}
+	}
+	g.tabs.Remove(item)
+	if sessIdx >= 0 {
+		g.sessions = append(g.sessions[:sessIdx], g.sessions[sessIdx+1:]...)
+	}
+	// Keep at least one session
+	if len(g.sessions) == 0 {
+		st := g.newSessionTab()
+		g.sessions = append(g.sessions, st)
+		g.updateTab(st)
+		// Move the new tab before the "New Session" tab
+		newItem := g.tabs.Items[len(g.tabs.Items)-1]
+		rest := g.tabs.Items[:len(g.tabs.Items)-1]
+		g.tabs.SetItems(append([]*container.TabItem{newItem}, rest...))
+	}
+	if g.activeIdx >= len(g.sessions) {
+		g.activeIdx = len(g.sessions) - 1
+	}
+	if g.activeIdx < 0 {
+		g.activeIdx = 0
+	}
+	g.tabs.SelectIndex(g.activeIdx)
+	g.refreshContent()
+}
+
+// onTabSelected handles switching between tabs.
+func (g *Guac) onTabSelected(selected *container.TabItem) {
+	if selected.Text == "New Session" {
+		st := g.newSessionTab()
+		g.sessions = append(g.sessions, st)
+		g.activeIdx = len(g.sessions) - 1
+		g.updateTab(st)
+		// Remove and re-append "New Session" to keep it rightmost
+		g.tabs.Remove(g.newTab)
+		g.tabs.Append(g.newTab)
+		g.tabs.SelectIndex(len(g.tabs.Items) - 2)
+		g.refreshContent()
+		return
+	}
+	for i, st := range g.sessions {
+		if st.tab == selected {
+			g.activeIdx = i
+			g.refreshContent()
+			return
+		}
+	}
+}
+
+func (g *Guac) buildMenu() {
+	newTabItem := fyne.NewMenuItem("New Tab", func() {
+		st := g.newSessionTab()
+		g.sessions = append(g.sessions, st)
+		g.updateTab(st)
+		g.activeIdx = len(g.sessions) - 1
+		// Keep the "New Session" tab rightmost, then select the new tab
+		g.tabs.Remove(g.newTab)
+		g.tabs.Append(g.newTab)
+		g.tabs.SelectIndex(len(g.tabs.Items) - 2)
+		g.refreshContent()
+	})
+
+	fileMenu := fyne.NewMenu("File", newTabItem)
+	helpMenu := fyne.NewMenu("About",
+		fyne.NewMenuItem("About", func() {
+			g.w.SetContent(container.NewVBox(
+				widget.NewLabel("Guacamole GUI"),
+				widget.NewLabel("A simple Fyne GUI with tabbed sessions."),
+			))
+		}),
+	)
+	g.w.SetMainMenu(fyne.NewMainMenu(fileMenu, helpMenu))
+}
