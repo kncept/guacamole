@@ -23,8 +23,13 @@ var activeSessionIdx = 0
 
 var sessions []*session
 
+// sessionCount is a monotonically increasing counter for naming sessions,
+// independent of how many sessions currently exist.
+var sessionCount int
+
 func newSession() *session {
-	id := fmt.Sprintf("Session %d", len(sessions)+1)
+	sessionCount++
+	id := fmt.Sprintf("Session %d", sessionCount)
 	s := &session{
 		id:       id,
 		output:   widget.NewLabel(""),
@@ -46,8 +51,51 @@ func main() {
 
 	// ---- Build the UI ----
 
-	// Tab container - holds one tab per session
-	tabContainer := container.NewAppTabs()
+	// Tab container - holds one tab per session (DocTabs supports per-tab close buttons)
+	tabContainer := container.NewDocTabs()
+
+	// Close (X) button: remove the session/tab, except for the "New Session" tab
+	tabContainer.CloseIntercept = func(item *container.TabItem) {
+		if item.Text == "New Session" {
+			return
+		}
+		tabIdx := -1
+		for i, tab := range tabContainer.Items {
+			if tab == item {
+				tabIdx = i
+				break
+			}
+		}
+		tabContainer.Remove(item)
+		if tabIdx >= 0 && tabIdx < len(sessions) {
+			sessions = append(sessions[:tabIdx], sessions[tabIdx+1:]...)
+		}
+		// Keep at least one session
+		if len(sessions) == 0 {
+			s := newSession()
+			sessions = append(sessions, s)
+			updateTabForSession(tabContainer, s)
+			// Move the new tab before the "New Session" tab
+			newItem := tabContainer.Items[len(tabContainer.Items)-1]
+			rest := tabContainer.Items[:len(tabContainer.Items)-1]
+			items := append([]*container.TabItem{newItem}, rest...)
+			tabContainer.SetItems(items)
+		}
+		if activeSessionIdx >= len(sessions) {
+			activeSessionIdx = len(sessions) - 1
+		}
+		if activeSessionIdx < 0 {
+			activeSessionIdx = 0
+		}
+		tabContainer.SelectIndex(activeSessionIdx)
+		inputBox := createInputBox(sessions[activeSessionIdx].input)
+		windowContent := container.NewVBox(
+			tabContainer,
+			inputBox,
+		)
+		w.SetContent(windowContent)
+		w.Resize(fyne.NewSize(600, 400))
+	}
 
 	// Initialize with the first session's tab
 	updateTabForSession(tabContainer, sessions[activeSessionIdx])
@@ -166,7 +214,7 @@ func createInputBox(activeInput *widget.Entry) *fyne.Container {
 }
 
 // updateTabForSession creates/updates the tab for a given session and appends it to the tab container.
-func updateTabForSession(tabContainer *container.AppTabs, s *session) {
+func updateTabForSession(tabContainer *container.DocTabs, s *session) {
 	// Update the output label with all messages
 	outputText := strings.Join(s.messages, "\n")
 	s.output.SetText(outputText)
