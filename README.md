@@ -1,11 +1,14 @@
 # Guacamole
 
-A tool I was using was giving me errors, due to an upstream bug that has been closed out as will not fix.
-So, I built this as a workaround.
+N.B. Guacamole is in early WIP, but is showing great promise.
 
-Of course, it turned out that the bug in question _wasn't_ the issue, but hey, now I have a cool tool that does a bunch of things.
+Tired of having to change AI tool every time you need to ask a detailed question on a different subject?
 
-## Cool things
+Guacomole - Allowing you to easily switch experts within the same prompt, so that you can get a full 360 degree understanding of your interest.
+
+Tokenmaxxing? Or just need the BEST AI response, regardless of the model? Enable Magi Mode - Multi AI operation to ensure that only the highest quality responses are included
+
+## Cool Tech Things
 
 1. Runs a chat session with history — saved to `~/.guac/session/<session ID>.json` after every turn and resumable with `--ses <session ID>`
 2. Tool use: the model can call `read_file`, `ls` and `write_file` to work with the local filesystem; every call is printed as it happens, and writes need your approval
