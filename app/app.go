@@ -113,7 +113,7 @@ func (st *sessionTab) session() *ai.Session {
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
-		sess.Tools = tools.AllTools()
+		sess.Tools = tools.FileSystem() // add default file/tools: read_file, ls, write_file
 		st.chat.session = sess
 	}
 	return st.chat.session
@@ -191,6 +191,9 @@ func (g *Guac) createInputBox(activeInput *widget.Entry) *fyne.Container {
 		}
 		g.runPrompt(activeInput, text)
 	}
+
+	// hook up the submit actions for shift+enter
+	activeInput.OnSubmitted = submit
 
 	// Submit button for mouse users; pressing it triggers submission.
 	submmitBtn := widget.NewButton("Submit", func() {
