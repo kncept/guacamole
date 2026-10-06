@@ -66,6 +66,8 @@ func NewSession(loop *Loop, history ...Message) *Session {
 		ID:       newSessionID(),
 		Loop:     loop,
 		messages: messages,
+
+		SystemPrompt: DevAssistant,
 	}
 }
 
