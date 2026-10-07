@@ -21,7 +21,18 @@ const maxReadBytes = 64 * 1024
 
 // FileSystem returns all the file tools: read_file, ls and write_file.
 func FileSystem(checker AccessChecker) []ai.Tool {
-	return []ai.Tool{ReadFile(checker), Ls(checker), WriteFile(checker)}
+	return []ai.Tool{
+		ReadFile(checker),
+		Ls(checker),
+		WriteFile(checker),
+
+		// TODO:
+		// Glob // use https://github.com/bmatcuk/doublestar and include notes on the patterns from the docs
+		// EditFile // regex/string style replace
+		// CreateDirectory // including parent directories
+		// MoveFile // has to check permissions _twice_
+		// ListAllowedDirectories // list of directories that server is allowed to access without asking. Return Read/Write differences as well
+	}
 }
 
 // ReadFile returns a tool that reads the contents of a file.
@@ -82,6 +93,13 @@ func Ls(checker AccessChecker) ai.Tool {
 			if a.Path == "" {
 				a.Path = "."
 			}
+			// make absolute
+			absPath, err := filepath.Abs(a.Path)
+			if err != nil {
+				return "", err
+			}
+			a.Path = absPath
+
 			if err := checkAccess(checker, "ls", a.Path, permissions.AccessRead); err != nil {
 				return "", err
 			}

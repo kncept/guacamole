@@ -21,5 +21,10 @@ func AllTools(checker AccessChecker, callbackHandler UserQuestionCallbackHandler
 	if callbackHandler != nil {
 		tools = append(tools, User(callbackHandler)...)
 	}
+
+	// time : current user time && convert time zone && perhaps ntp time?
+
+	// http_fetch: basic curl-like operations. Custom User-Agent, and allow specifying headers (and operation, and a body)
+
 	return tools
 }

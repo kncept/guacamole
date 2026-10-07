@@ -1,8 +1,6 @@
 package app
 
 import (
-	"strings"
-
 	"fyne.io/fyne/v2"
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
@@ -16,11 +14,11 @@ import (
 
 // chat represents a single chat session with its own output log and input field.
 type chat struct {
-	id       string
-	output   *widget.Label
-	input    *widget.Entry
-	messages []string
-	session  *ai.Session
+	id        string
+	log       *fyne.Container // VBox of message bubbles, newest at the bottom
+	logScroll *container.Scroll
+	input     *widget.Entry
+	session   *ai.Session
 }
 
 // Guac holds the state and references for the Guacamole GUI application.
@@ -102,10 +100,9 @@ func (g *Guac) refreshContent() {
 
 // updateTab creates/refreshes the tab item for the session and appends it to
 // its container. Each tab gets its own border: the banner on top, the
-// scrollable output in the middle, and the session's input box at the bottom.
+// scrollable log in the middle, and the session's input box at the bottom.
 func (g *Guac) updateTab(st *sessionTab) {
-	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	content := container.NewBorder(st.banner.box, st.inputBoxArea, nil, nil, container.NewVScroll(st.chat.output))
+	content := container.NewBorder(st.banner.box, st.inputBoxArea, nil, nil, st.chat.logScroll)
 	if st.tab == nil {
 		st.tab = container.NewTabItem(st.chat.id, content)
 		st.tabs.Append(st.tab)

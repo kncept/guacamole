@@ -68,7 +68,7 @@ func NewSession(loop *Loop, history ...Message) *Session {
 		messages: messages,
 
 		SystemPrompt:  DevAssistant,
-		MaxToolRounds: 20, // default is 10
+		MaxToolRounds: 30, // default is 10
 	}
 }
 

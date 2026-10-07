@@ -74,10 +74,12 @@ func labelsForRoles(roles []definitions.Role) []string {
 
 func (g *Guac) newSessionTab() *sessionTab {
 	g.count++
+	log := container.NewVBox()
 	c := &chat{
-		id:     fmt.Sprintf("Session %d", g.count),
-		output: widget.NewLabel(""),
-		input:  widget.NewEntry(),
+		id:        fmt.Sprintf("Session %d", g.count),
+		log:       log,
+		logScroll: container.NewVScroll(log),
+		input:     widget.NewEntry(),
 	}
 	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
 	st.inputBoxArea = st.inputBox()
@@ -171,10 +173,23 @@ func (g *guiGranter) AskForAccess(toolName string, toolValue string) config.Poli
 
 	original := g.tab.inputBoxArea
 	fyne.Do(func() {
-		denyBtn := widget.NewButton("Deny Forever", func() { answer <- config.PolicyDeny })
-		thisTimeBtn := widget.NewButton("Allow this Time", func() { answer <- config.PolicyAllow })
-		alwaysBtn := widget.NewButton("Allow Always", func() { answer <- config.PolicyAllow })
-		g.tab.inputBoxArea = container.NewHBox(denyBtn, thisTimeBtn, alwaysBtn)
+		// Show what is being asked for, not just the buttons to answer it.
+		prompt := widget.NewLabel(fmt.Sprintf("%s is asking for access to %s", toolName, toolValue))
+		prompt.Importance = widget.HighImportance
+		// A late second click must not block the UI thread, so extra
+		// answers are dropped once the first one was given.
+		respond := func(policy config.Policy) func() {
+			return func() {
+				select {
+				case answer <- policy:
+				default:
+				}
+			}
+		}
+		denyBtn := widget.NewButton("Deny Forever", respond(config.PolicyDeny))
+		thisTimeBtn := widget.NewButton("Allow this Time", respond(config.PolicyAllow))
+		alwaysBtn := widget.NewButton("Allow Always", respond(config.PolicyAllow))
+		g.tab.inputBoxArea = container.NewVBox(prompt, container.NewHBox(denyBtn, thisTimeBtn, alwaysBtn))
 		g.tab.updateInput()
 	})
 	p := <-answer
@@ -269,31 +284,36 @@ func (st *sessionTab) inputBox() *fyne.Container {
 }
 
 // runPrompt sends the prompt through the session's AI loop, streaming the
-// reply into the session log.
+// reply into the session log. The spinner against the user bubble runs for
+// as long as the query is active.
 func (st *sessionTab) runPrompt(text string) {
-	st.chat.messages = append(st.chat.messages, "You: "+text)
-	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+	spinner := st.chat.addUserMessage(text)
 	st.chat.input.SetText("")
 
 	go func() {
 		var reply strings.Builder
 		sess := st.session()
 		loop := sess.Loop
+		var aiLabel *widget.Label
 		loop.OnChunk = func(chunk ai.Chunk) error {
 			reply.WriteString(chunk.Delta)
 			fyne.Do(func() {
-				st.chat.output.SetText(strings.Join(st.chat.messages, "\n") + "\nAI: " + reply.String())
+				if aiLabel == nil {
+					aiLabel = st.chat.addAIMessage()
+				}
+				aiLabel.SetText(reply.String())
+				st.chat.scrollLog()
 			})
 			return nil
 		}
 		_, err := sess.Say(context.Background(), text)
 		fyne.Do(func() {
 			if err != nil {
-				st.chat.messages = append(st.chat.messages, "Error: "+err.Error())
-			} else {
-				st.chat.messages = append(st.chat.messages, "AI: "+reply.String())
+				st.chat.addErrorMessage(err)
 			}
-			st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+			spinner.Stop()
+			spinner.Hide()
+			st.chat.scrollLog()
 		})
 	}()
 }
