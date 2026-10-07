@@ -67,14 +67,6 @@ func (g *Guac) Run() {
 	g.w.ShowAndRun()
 }
 
-func (g *Guac) modelLabels() []string {
-	labels := make([]string, 0, len(g.models))
-	for _, m := range g.models {
-		labels = append(labels, m.Label())
-	}
-	return labels
-}
-
 func (g *Guac) onModelChanged(st *sessionTab, label string) {
 	for _, m := range g.models {
 		if m.Label() == label {
@@ -98,14 +90,6 @@ func (g *Guac) onRoleChanged(st *sessionTab, label string) {
 	}
 }
 
-func (g *Guac) roleLabels() []string {
-	labels := make([]string, 0, len(g.roles))
-	for _, r := range g.roles {
-		labels = append(labels, r.RoleName)
-	}
-	return labels
-}
-
 // refreshContent rebuilds the window content around the session tabs. Each tab
 // carries its own input box, so only the tabs need to be (re)installed.
 func (g *Guac) refreshContent() {
@@ -118,7 +102,7 @@ func (g *Guac) refreshContent() {
 // scrollable output in the middle, and the session's input box at the bottom.
 func (g *Guac) updateTab(st *sessionTab) {
 	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	content := container.NewBorder(st.banner, st.inputBox(), nil, nil, container.NewVScroll(st.chat.output))
+	content := container.NewBorder(st.banner.box, st.inputBox(), nil, nil, container.NewVScroll(st.chat.output))
 	st.tab = container.NewTabItem(st.chat.id, content)
 	st.tabs.Append(st.tab)
 }

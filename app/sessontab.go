@@ -13,19 +13,66 @@ import (
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
 	"github.com/kncept/guacamole/restfulai"
+	"github.com/kncept/guacamole/roles/definitions"
 	"github.com/kncept/guacamole/tools"
 )
 
 // sessionTab bundles a chat session with its tab item and the tab container
 // it lives in, so a session always knows where it is displayed.
 type sessionTab struct {
-	chat     *chat
-	tab      *container.TabItem
-	tabs     *container.DocTabs
-	guac     *Guac
-	banner   fyne.CanvasObject
+	chat   *chat
+	tab    *container.TabItem
+	tabs   *container.DocTabs
+	guac   *Guac
+	banner *sessionBanner
+}
+
+// sessionBanner is the row of role and model selectors shown at the top of a
+// session tab. It owns the selector widgets and the container that lays them
+// out, so a session always knows which role and model are active.
+type sessionBanner struct {
 	modelSel *widget.Select
 	roleSel  *widget.Select
+	box      *fyne.Container
+}
+
+// newSessionBanner builds a banner from the available models and roles, wiring
+// each selector to the provided change handlers (called with the selected
+// label).
+func newSessionBanner(models []config.ModelOption, roles []definitions.Role, onModelChanged, onRoleChanged func(string)) *sessionBanner {
+	b := &sessionBanner{}
+
+	b.modelSel = widget.NewSelect(labelsForModels(models), onModelChanged)
+	if len(models) > 0 {
+		b.modelSel.SetSelected(models[0].Label())
+	}
+	b.roleSel = widget.NewSelect(labelsForRoles(roles), onRoleChanged)
+	if len(roles) > 0 {
+		b.roleSel.SetSelected(roles[0].RoleName)
+	}
+
+	// Provider / Model banner, with role selector to the left of it
+	b.box = container.NewHBox(
+		widget.NewLabel("Current role:"), b.roleSel,
+		widget.NewLabel("Provider / Model:"), b.modelSel,
+	)
+	return b
+}
+
+func labelsForModels(models []config.ModelOption) []string {
+	labels := make([]string, 0, len(models))
+	for _, m := range models {
+		labels = append(labels, m.Label())
+	}
+	return labels
+}
+
+func labelsForRoles(roles []definitions.Role) []string {
+	labels := make([]string, 0, len(roles))
+	for _, r := range roles {
+		labels = append(labels, r.RoleName)
+	}
+	return labels
 }
 
 func (g *Guac) newSessionTab() *sessionTab {
@@ -36,24 +83,11 @@ func (g *Guac) newSessionTab() *sessionTab {
 		input:  widget.NewEntry(),
 	}
 	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
-	st.modelSel = widget.NewSelect(g.modelLabels(), func(selected string) {
-		g.onModelChanged(st, selected)
-	})
-	if len(g.models) > 0 {
-		st.modelSel.SetSelected(g.models[0].Label())
-	}
-	st.roleSel = widget.NewSelect(g.roleLabels(), func(selected string) {
-		g.onRoleChanged(st, selected)
-	})
-	if len(g.roles) > 0 {
-		st.roleSel.SetSelected(g.roles[0].RoleName)
-	}
-	st.session() // create ai.Session with the selected model
-	// Provider / Model banner, with role selector above it
-	st.banner = container.NewHBox(
-		widget.NewLabel("Current role:"), st.roleSel,
-		widget.NewLabel("Provider / Model:"), st.modelSel,
+	st.banner = newSessionBanner(g.models, g.roles,
+		func(label string) { g.onModelChanged(st, label) },
+		func(label string) { g.onRoleChanged(st, label) },
 	)
+	st.session() // create ai.Session with the selected model
 	return st
 }
 
@@ -64,7 +98,7 @@ func (st *sessionTab) session() *ai.Session {
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
-		sess.Tools = tools.FileSystem() // add default file/tools: read_file, ls, write_file
+		sess.Tools = tools.AllTools()
 		st.chat.session = sess
 	}
 	return st.chat.session
@@ -103,7 +137,7 @@ func (e errorProvider) SendStream(ctx context.Context, req ai.Request, onChunk f
 
 func (st *sessionTab) selectedModel() config.ModelOption {
 	for _, m := range st.guac.models {
-		if m.Label() == st.modelSel.Selected {
+		if m.Label() == st.banner.modelSel.Selected {
 			return m
 		}
 	}
