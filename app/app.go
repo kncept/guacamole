@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
-	"log"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -13,8 +11,8 @@ import (
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
-	"github.com/kncept/guacamole/restfulai"
-	"github.com/kncept/guacamole/tools"
+	"github.com/kncept/guacamole/roles"
+	"github.com/kncept/guacamole/roles/definitions"
 )
 
 // chat represents a single chat session with its own output log and input field.
@@ -24,17 +22,6 @@ type chat struct {
 	input    *widget.Entry
 	messages []string
 	session  *ai.Session
-}
-
-// sessionTab bundles a chat session with its tab item and the tab container
-// it lives in, so a session always knows where it is displayed.
-type sessionTab struct {
-	chat     *chat
-	tab      *container.TabItem
-	tabs     *container.DocTabs
-	guac     *Guac
-	banner   fyne.CanvasObject
-	modelSel *widget.Select
 }
 
 // Guac holds the state and references for the Guacamole GUI application.
@@ -47,6 +34,7 @@ type Guac struct {
 	activeIdx int
 	count     int // monotonic counter for naming sessions
 	models    []config.ModelOption
+	roles     []definitions.Role
 }
 
 // New creates and initializes a new Guac GUI application.
@@ -56,6 +44,7 @@ func New() *Guac {
 
 	g := &Guac{a: a, w: w, count: 0}
 	g.models, _ = config.AllModelOptions()
+	g.roles = roles.AllRoles()
 	g.tabs = container.NewDocTabs()
 	g.tabs.CloseIntercept = g.onTabClosed
 	g.tabs.OnSelected = g.onTabSelected
@@ -79,84 +68,12 @@ func (g *Guac) Run() {
 	g.w.ShowAndRun()
 }
 
-func (g *Guac) newSessionTab() *sessionTab {
-	g.count++
-	c := &chat{
-		id:     fmt.Sprintf("Session %d", g.count),
-		output: widget.NewLabel(""),
-		input:  widget.NewEntry(),
-	}
-	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
-	st.modelSel = widget.NewSelect(g.modelLabels(), func(selected string) {
-		g.onModelChanged(st, selected)
-	})
-	if len(g.models) > 0 {
-		st.modelSel.SetSelected(g.models[0].Label())
-	}
-	st.session() // create ai.Session with the selected model
-	st.banner = container.NewHBox(widget.NewLabel("Provider / Model:"), st.modelSel)
-	return st
-}
-
 func (g *Guac) modelLabels() []string {
 	labels := make([]string, 0, len(g.models))
 	for _, m := range g.models {
 		labels = append(labels, m.Label())
 	}
 	return labels
-}
-
-// session returns the session's ai.Session, creating it if needed.
-func (st *sessionTab) session() *ai.Session {
-	if st.chat.session == nil {
-		loop := ai.NewLoop(st.loopProvider())
-		loop.Stream = true
-		sess := ai.NewSession(loop)
-		sess.Model = st.selectedModel().ModelID
-		sess.Tools = tools.FileSystem() // add default file/tools: read_file, ls, write_file
-		st.chat.session = sess
-	}
-	return st.chat.session
-}
-
-// loopProvider builds the REST provider for the session's selected model.
-func (st *sessionTab) loopProvider() ai.Provider {
-	opt := st.selectedModel()
-	provider, err := restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
-		BaseUrl:   opt.BaseURL,
-		ApiKey:    opt.APIKey,
-		ModelName: opt.ModelID,
-	})
-	if err != nil {
-		// The GUI keeps running: prompts with this model surface the error
-		// in the chat instead of crashing the app.
-		log.Printf("app: %v", err)
-		return errorProvider{err: err}
-	}
-	return provider
-}
-
-// errorProvider is an ai.Provider that fails every exchange with err, used
-// when a selected model has no usable connection details.
-type errorProvider struct {
-	err error
-}
-
-func (e errorProvider) Send(ctx context.Context, req ai.Request) (ai.Response, error) {
-	return ai.Response{}, e.err
-}
-
-func (e errorProvider) SendStream(ctx context.Context, req ai.Request, onChunk func(ai.Chunk) error) (ai.Response, error) {
-	return ai.Response{}, e.err
-}
-
-func (st *sessionTab) selectedModel() config.ModelOption {
-	for _, m := range st.guac.models {
-		if m.Label() == st.modelSel.Selected {
-			return m
-		}
-	}
-	return config.ModelOption{}
 }
 
 func (g *Guac) onModelChanged(st *sessionTab, label string) {
@@ -170,6 +87,24 @@ func (g *Guac) onModelChanged(st *sessionTab, label string) {
 			return
 		}
 	}
+}
+
+func (g *Guac) onRoleChanged(st *sessionTab, label string) {
+	for _, r := range g.roles {
+		if r.RoleName == label {
+			sess := st.session()
+			sess.SystemPrompt = r.RoleSystemPrompt
+			return
+		}
+	}
+}
+
+func (g *Guac) roleLabels() []string {
+	labels := make([]string, 0, len(g.roles))
+	for _, r := range g.roles {
+		labels = append(labels, r.RoleName)
+	}
+	return labels
 }
 
 // refreshContent rebuilds the window content with the active session's input box.

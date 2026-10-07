@@ -20,7 +20,7 @@ func LoadRoles() []definitions.Role {
 			data, err := staticFiles.ReadFile(entry.Name())
 			if err == nil {
 				roles = append(roles, definitions.Role{
-					RoleName:         entry.Name(),
+					RoleName:         entry.Name()[:len(entry.Name())-4],
 					RoleSetName:      "complex",
 					RoleSystemPrompt: string(data),
 				})
