@@ -34,6 +34,7 @@ type Guac struct {
 	count     int // monotonic counter for naming sessions
 	models    []config.ModelOption
 	roles     []definitions.Role
+	config    *config.GConfig
 	prefs     *preferencesWindow // lazily created Preferences window
 }
 
@@ -43,6 +44,7 @@ func New() *Guac {
 	w := a.NewWindow("Guacamole GUI")
 
 	g := &Guac{a: a, w: w, count: 0}
+	g.config, _ = config.Load()
 	g.models, _ = config.AllModelOptions()
 	g.roles = roles.AllRoles()
 	g.tabs = container.NewDocTabs()

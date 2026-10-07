@@ -47,7 +47,13 @@ func main() {
 		panic(err)
 	}
 
-	replLoop(conf, resumeID)
+	gcfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Could not load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	replLoop(conf, gcfg, resumeID)
 }
 
 func firstNonEmpty(values ...string) string {
@@ -59,11 +65,11 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-func replLoop(conf *config.ApiModelInterfaceDetails, resumeID string) {
+func replLoop(conf *config.ApiModelInterfaceDetails, gcfg *config.GConfig, resumeID string) {
 	// One stdin scanner shared by the REPL.
 	scanner := bufio.NewScanner(os.Stdin)
 
-	promptRunner, err := promptrunner.NewPromptRunner(conf, resumeID)
+	promptRunner, err := promptrunner.NewPromptRunner(conf, gcfg, resumeID)
 	if err != nil {
 		fmt.Printf("Could not start session: %v\n", err)
 		os.Exit(1)

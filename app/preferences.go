@@ -164,10 +164,7 @@ func (p *preferencesWindow) rolesScreen() fyne.CanvasObject {
 // sessionsScreen lists the sessions saved on disk, each with a delete
 // button.
 func (p *preferencesWindow) sessionsScreen() fyne.CanvasObject {
-	dir, err := config.SessionsDir()
-	if err != nil {
-		return paddedLabel("Could not find the sessions directory: " + err.Error())
-	}
+	dir := p.guac.config.SessionsDir
 	ids, err := sessionstore.List(dir)
 	if err != nil {
 		return paddedLabel("Could not list saved sessions: " + err.Error())

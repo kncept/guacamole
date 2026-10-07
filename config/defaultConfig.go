@@ -16,16 +16,6 @@ func GuacDir() (string, error) {
 	return filepath.Join(home, ".guac"), nil
 }
 
-// SessionsDir returns the directory saved sessions live in: ~/.guac/session,
-// one <session ID>.json per session.
-func SessionsDir() (string, error) {
-	dir, err := GuacDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(dir, "session"), nil
-}
-
 type ApiModelInterfaceDetails struct {
 	BaseUrl   string
 	ApiKey    string

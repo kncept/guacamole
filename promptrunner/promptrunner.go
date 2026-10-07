@@ -49,11 +49,9 @@ type promptRunner struct {
 // NewPromptRunner starts a chat session over conf's provider. If resumeID
 // is non-empty, the session with that ID is loaded from the sessions
 // directory and continues where it left off.
-func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (PromptRunner, error) {
-	sessionsDir, err := config.SessionsDir()
-	if err != nil {
-		return nil, err
-	}
+// The sessions directory is taken from cfg (which applies its defaults).
+func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string) (PromptRunner, error) {
+	sessionsDir := cfg.SessionsDir
 
 	provider, err := restfulai.NewRestfulAI(conf)
 	if err != nil {
