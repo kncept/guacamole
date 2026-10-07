@@ -16,8 +16,8 @@ func User() []ai.Tool {
 // needs a CALLBACK
 func UserQuestion() ai.Tool {
 	return ai.Tool{
-		Name:        "User Question",
-		Description: "Ask the user a question, and have them pick from a set of options",
+		Name:        "user_question",
+		Description: "Ask the user a question and return their answer",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -25,16 +25,17 @@ func UserQuestion() ai.Tool {
 					"type":        "string",
 					"description": "Question to ask the user",
 				},
-				"options": map[string]any{
-					"type":        "string",
+				"responses": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
 					"description": "Ordered list of suggested responses",
 				},
 				"freetext": map[string]any{
 					"type":        "boolean",
-					"description": "Allow the user to enter a freetext response instead",
+					"description": "Whether the user may answer with a freetext response instead of a suggested one",
 				},
 			},
-			"required": []string{"path"},
+			"required": []string{"question", "responses", "freetext"},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
 			return "", nil
