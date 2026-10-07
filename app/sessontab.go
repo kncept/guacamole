@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -107,4 +108,61 @@ func (st *sessionTab) selectedModel() config.ModelOption {
 		}
 	}
 	return config.ModelOption{}
+}
+
+// inputBox builds the session's input area: a multi-line entry with a submit
+// button. It is placed in the bottom border of the session's tab, so each
+// session has its own input independent of the others.
+func (st *sessionTab) inputBox() *fyne.Container {
+	input := st.chat.input
+	// Enable multi-line mode so that Enter inserts a newline instead of submitting.
+	input.MultiLine = true
+
+	// Submit handler: called from the submit button and keyboard shortcuts.
+	submit := func(text string) {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return
+		}
+		st.runPrompt(text)
+	}
+
+	input.OnSubmitted = submit
+
+	// Submit button for mouse users; pressing it triggers submission.
+	submmitBtn := widget.NewButton("Submit", func() {
+		submit(input.Text)
+	})
+
+	return container.NewBorder(nil, nil, nil, submmitBtn, input)
+}
+
+// runPrompt sends the prompt through the session's AI loop, streaming the
+// reply into the session log.
+func (st *sessionTab) runPrompt(text string) {
+	st.chat.messages = append(st.chat.messages, "You: "+text)
+	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+	st.chat.input.SetText("")
+
+	go func() {
+		var reply strings.Builder
+		sess := st.session()
+		loop := sess.Loop
+		loop.OnChunk = func(chunk ai.Chunk) error {
+			reply.WriteString(chunk.Delta)
+			fyne.Do(func() {
+				st.chat.output.SetText(strings.Join(st.chat.messages, "\n") + "\nAI: " + reply.String())
+			})
+			return nil
+		}
+		_, err := sess.Say(context.Background(), text)
+		fyne.Do(func() {
+			if err != nil {
+				st.chat.messages = append(st.chat.messages, "Error: "+err.Error())
+			} else {
+				st.chat.messages = append(st.chat.messages, "AI: "+reply.String())
+			}
+			st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
+		})
+	}()
 }

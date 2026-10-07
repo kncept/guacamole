@@ -1,7 +1,6 @@
 package app
 
 import (
-	"context"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -107,74 +106,20 @@ func (g *Guac) roleLabels() []string {
 	return labels
 }
 
-// refreshContent rebuilds the window content with the active session's input box.
+// refreshContent rebuilds the window content around the session tabs. Each tab
+// carries its own input box, so only the tabs need to be (re)installed.
 func (g *Guac) refreshContent() {
-	inputBox := g.createInputBox(g.sessions[g.activeIdx].chat.input)
-	g.w.SetContent(container.NewBorder(nil, inputBox, nil, nil, g.tabs))
+	g.w.SetContent(g.tabs)
 	g.w.Resize(fyne.NewSize(600, 400))
 }
 
-func (g *Guac) createInputBox(activeInput *widget.Entry) *fyne.Container {
-	// Enable multi-line mode so that Enter inserts a newline instead of submitting.
-	activeInput.MultiLine = true
-
-	// Submit handler: called from the submit button and keyboard shortcuts.
-	submit := func(text string) {
-		text = strings.TrimSpace(text)
-		if text == "" {
-			return
-		}
-		g.runPrompt(activeInput, text)
-	}
-
-	// hook up the submit actions for shift+enter
-	activeInput.OnSubmitted = submit
-
-	// Submit button for mouse users; pressing it triggers submission.
-	submmitBtn := widget.NewButton("Submit", func() {
-		text := activeInput.Text
-		submit(text)
-	})
-
-	return container.NewBorder(nil, nil, nil, submmitBtn, activeInput)
-}
-
-// runPrompt sends the prompt through the active session's AI loop, streaming
-// the reply into the session log.
-func (g *Guac) runPrompt(activeInput *widget.Entry, text string) {
-	st := g.sessions[g.activeIdx]
-	st.chat.messages = append(st.chat.messages, "You: "+text)
-	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	activeInput.SetText("")
-
-	go func() {
-		var reply strings.Builder
-		sess := st.session()
-		loop := sess.Loop
-		loop.OnChunk = func(chunk ai.Chunk) error {
-			reply.WriteString(chunk.Delta)
-			fyne.Do(func() {
-				st.chat.output.SetText(strings.Join(st.chat.messages, "\n") + "\nAI: " + reply.String())
-			})
-			return nil
-		}
-		_, err := sess.Say(context.Background(), text)
-		fyne.Do(func() {
-			if err != nil {
-				st.chat.messages = append(st.chat.messages, "Error: "+err.Error())
-			} else {
-				st.chat.messages = append(st.chat.messages, "AI: "+reply.String())
-			}
-			st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-		})
-	}()
-}
-
-// updateTab creates/refreshes the tab item for the session and appends it to its container.
+// updateTab creates/refreshes the tab item for the session and appends it to
+// its container. Each tab gets its own border: the banner on top, the
+// scrollable output in the middle, and the session's input box at the bottom.
 func (g *Guac) updateTab(st *sessionTab) {
 	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	log := container.NewBorder(st.banner, nil, nil, nil, container.NewVScroll(st.chat.output))
-	st.tab = container.NewTabItem(st.chat.id, log)
+	content := container.NewBorder(st.banner, st.inputBox(), nil, nil, container.NewVScroll(st.chat.output))
+	st.tab = container.NewTabItem(st.chat.id, content)
 	st.tabs.Append(st.tab)
 }
 
