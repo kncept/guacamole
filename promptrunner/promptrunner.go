@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/kncept/guacamole/ai"
@@ -17,11 +16,6 @@ import (
 	"github.com/kncept/guacamole/restfulai"
 	"github.com/kncept/guacamole/sessionstore"
 	"github.com/kncept/guacamole/tools"
-)
-
-// Sessions live at ~/.guac/session/<session ID>.json.
-const (
-	sessionsDirName = "session"
 )
 
 type PromptRunner interface {
@@ -56,7 +50,7 @@ type promptRunner struct {
 // is non-empty, the session with that ID is loaded from the sessions
 // directory and continues where it left off.
 func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (PromptRunner, error) {
-	guacDir, err := config.GuacDir()
+	sessionsDir, err := config.SessionsDir()
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +62,7 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, resumeID string) (Pr
 
 	this := &promptRunner{
 		model:       conf.ModelName,
-		sessionsDir: filepath.Join(guacDir, sessionsDirName),
+		sessionsDir: sessionsDir,
 		interactive: isTerminal(os.Stdin),
 	}
 

@@ -34,6 +34,7 @@ type Guac struct {
 	count     int // monotonic counter for naming sessions
 	models    []config.ModelOption
 	roles     []definitions.Role
+	prefs     *preferencesWindow // lazily created Preferences window
 }
 
 // New creates and initializes a new Guac GUI application.
@@ -179,7 +180,11 @@ func (g *Guac) buildMenu() {
 		g.refreshContent()
 	})
 
-	fileMenu := fyne.NewMenu("File", newTabItem)
+	preferencesItem := fyne.NewMenuItem("Preferences...", func() {
+		g.showPreferences()
+	})
+
+	fileMenu := fyne.NewMenu("File", newTabItem, fyne.NewMenuItemSeparator(), preferencesItem)
 	helpMenu := fyne.NewMenu("About",
 		fyne.NewMenuItem("About", func() {
 			g.w.SetContent(container.NewVBox(

@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strings"
 
 	"github.com/kncept/guacamole/ai"
 )
@@ -90,6 +92,52 @@ func Load(dir string, id string, loop *ai.Loop) (*ai.Session, error) {
 func checkID(id string) error {
 	if !idPattern.MatchString(id) {
 		return fmt.Errorf("sessionstore: invalid session ID %q", id)
+	}
+	return nil
+}
+
+// List returns the IDs of the sessions saved in dir, in sorted order. A
+// directory that does not exist yet (nothing saved) is not an error: it
+// simply has no sessions. Files that are not valid session files are
+// ignored.
+func List(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	ids := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".json")
+		if checkID(id) != nil {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// Delete removes the session saved at <dir>/<id>.json.
+func Delete(dir string, id string) error {
+	if err := checkID(id); err != nil {
+		return err
+	}
+	path := filepath.Join(dir, id+".json")
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("sessionstore: no saved session %q in %s", id, dir)
+		}
+		return err
 	}
 	return nil
 }

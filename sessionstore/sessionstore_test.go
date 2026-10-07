@@ -90,3 +90,64 @@ func TestInvalidIDs(t *testing.T) {
 		}
 	}
 }
+
+func TestList(t *testing.T) {
+	// Nothing saved yet: no sessions, and no error.
+	if ids, err := List(t.TempDir()); err != nil || len(ids) != 0 {
+		t.Fatalf("List(empty dir) = %v, %v; want no sessions and no error", ids, err)
+	}
+
+	dir := t.TempDir()
+	for _, id := range []string{"bravo", "alpha", "charlie"} {
+		session := ai.NewSession(nil)
+		session.ID = id
+		if _, err := Save(dir, session); err != nil {
+			t.Fatalf("Save(%q): %v", id, err)
+		}
+	}
+	// Files that are not saved sessions must not show up.
+	if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "not an id.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	ids, err := List(dir)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	want := []string{"alpha", "bravo", "charlie"}
+	if len(ids) != len(want) {
+		t.Fatalf("List = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Errorf("List[%d] = %q, want %q", i, ids[i], want[i])
+		}
+	}
+}
+
+func TestDelete(t *testing.T) {
+	dir := t.TempDir()
+	session := ai.NewSession(nil)
+	session.ID = "gone"
+	if _, err := Save(dir, session); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	if err := Delete(dir, "gone"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if ids, err := List(dir); err != nil || len(ids) != 0 {
+		t.Errorf("List after Delete = %v, %v; want no sessions", ids, err)
+	}
+	if err := Delete(dir, "gone"); err == nil {
+		t.Error("Delete of an already deleted session: expected error, got nil")
+	}
+	for _, id := range []string{"", "..", "../escape"} {
+		if err := Delete(dir, id); err == nil {
+			t.Errorf("Delete(%q): expected error, got nil", id)
+		}
+	}
+}

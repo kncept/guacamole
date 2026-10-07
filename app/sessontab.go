@@ -38,18 +38,13 @@ type sessionBanner struct {
 
 // newSessionBanner builds a banner from the available models and roles, wiring
 // each selector to the provided change handlers (called with the selected
-// label).
+// label). Callers must attach the banner to their sessionTab before selecting
+// a default, because selecting fires the change handlers.
 func newSessionBanner(models []config.ModelOption, roles []definitions.Role, onModelChanged, onRoleChanged func(string)) *sessionBanner {
 	b := &sessionBanner{}
 
 	b.modelSel = widget.NewSelect(labelsForModels(models), onModelChanged)
-	if len(models) > 0 {
-		b.modelSel.SetSelected(models[0].Label())
-	}
 	b.roleSel = widget.NewSelect(labelsForRoles(roles), onRoleChanged)
-	if len(roles) > 0 {
-		b.roleSel.SetSelected(roles[0].RoleName)
-	}
 
 	// Provider / Model banner, with role selector to the left of it
 	b.box = container.NewHBox(
@@ -83,10 +78,18 @@ func (g *Guac) newSessionTab() *sessionTab {
 		input:  widget.NewEntry(),
 	}
 	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
+	// The banner's selectors must not pick defaults until it is attached to
+	// st: SetSelected fires the change callbacks, which read st.banner.
 	st.banner = newSessionBanner(g.models, g.roles,
 		func(label string) { g.onModelChanged(st, label) },
 		func(label string) { g.onRoleChanged(st, label) },
 	)
+	if len(g.models) > 0 {
+		st.banner.modelSel.SetSelected(g.models[0].Label())
+	}
+	if len(g.roles) > 0 {
+		st.banner.roleSel.SetSelected(g.roles[0].RoleName)
+	}
 	st.session() // create ai.Session with the selected model
 	return st
 }
