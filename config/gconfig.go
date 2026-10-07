@@ -21,10 +21,11 @@ const (
 )
 
 // Permission is one rule for a tool: a value (e.g. a directory path) and the
-// policy that applies to it.
+// policies that apply to reads and writes of that value.
 type Permission struct {
-	Value  string `json:"value"`
-	Policy Policy `json:"policy"`
+	Value string `json:"value"`
+	Read  Policy `json:"read"`
+	Write Policy `json:"write"`
 }
 
 // ToolPermissions is the list of permission rules for one tool.
@@ -66,20 +67,20 @@ func Load() (*GConfig, error) {
 
 // InitDefaults populates any required members that are not set, like
 // SessionsDir. Values that are already present are never overwritten.
-func (c *GConfig) InitDefaults() {
-	if c.SessionsDir == "" {
+func (this *GConfig) InitDefaults() {
+	if this.SessionsDir == "" {
 		if dir, err := GuacDir(); err == nil {
-			c.SessionsDir = filepath.Join(dir, "session")
+			this.SessionsDir = filepath.Join(dir, "session")
 		}
 	}
-	if c.Permissions == nil {
-		c.Permissions = map[string]ToolPermissions{}
+	if this.Permissions == nil {
+		this.Permissions = map[string]ToolPermissions{}
 	}
 }
 
 // Save writes the config back to GuacDir()/config.json, creating the
 // directory if needed.
-func (c *GConfig) Save() error {
+func (this *GConfig) Save() error {
 	dir, err := GuacDir()
 	if err != nil {
 		return err
@@ -87,7 +88,7 @@ func (c *GConfig) Save() error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.MarshalIndent(this, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -96,14 +97,14 @@ func (c *GConfig) Save() error {
 
 // GetToolPermissions returns the permission rules for the named tool. A tool
 // with no rules returns an empty list.
-func (c *GConfig) GetToolPermissions(toolname string) ToolPermissions {
-	return c.Permissions[toolname]
+func (this *GConfig) GetToolPermissions(toolname string) ToolPermissions {
+	return this.Permissions[toolname]
 }
 
 // SetToolPermissions stores the permission rules for the named tool.
-func (c *GConfig) SetToolPermissions(toolname string, permissions ToolPermissions) {
-	if c.Permissions == nil {
-		c.Permissions = map[string]ToolPermissions{}
+func (this *GConfig) SetToolPermissions(toolname string, permissions ToolPermissions) {
+	if this.Permissions == nil {
+		this.Permissions = map[string]ToolPermissions{}
 	}
-	c.Permissions[toolname] = permissions
+	this.Permissions[toolname] = permissions
 }

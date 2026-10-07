@@ -61,8 +61,8 @@ func TestLoadReadsExistingFile(t *testing.T) {
 		"sessionsDir": "/custom/session",
 		"permissions": {
 			"read_file": [
-				{"value": "/tmp", "policy": "allow"},
-				{"value": "/etc", "policy": "deny"}
+				{"value": "/tmp", "read": "allow", "write": "allow"},
+				{"value": "/etc", "read": "deny", "write": "deny"}
 			]
 		}
 	}`
@@ -78,8 +78,8 @@ func TestLoadReadsExistingFile(t *testing.T) {
 		t.Errorf("SessionsDir = %q, want %q", c.SessionsDir, "/custom/session")
 	}
 	want := ToolPermissions{
-		{Value: "/tmp", Policy: PolicyAllow},
-		{Value: "/etc", Policy: PolicyDeny},
+		{Value: "/tmp", Read: PolicyAllow, Write: PolicyAllow},
+		{Value: "/etc", Read: PolicyDeny, Write: PolicyDeny},
 	}
 	if got := c.GetToolPermissions("read_file"); !reflect.DeepEqual(got, want) {
 		t.Errorf("GetToolPermissions(read_file) = %v, want %v", got, want)
@@ -97,10 +97,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	c.SetToolPermissions("read_file", ToolPermissions{
-		{Value: "/tmp", Policy: PolicyAllow},
-		{Value: "/etc", Policy: PolicyDeny},
+		{Value: "/tmp", Read: PolicyAllow, Write: PolicyAllow},
+		{Value: "/etc", Read: PolicyDeny, Write: PolicyDeny},
 	})
-	c.SetToolPermissions("bash", ToolPermissions{{Value: "*", Policy: PolicyAsk}})
+	c.SetToolPermissions("bash", ToolPermissions{{Value: "*", Read: PolicyAsk, Write: PolicyAsk}})
 	if err := c.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if c2.SessionsDir != c.SessionsDir {
 		t.Errorf("SessionsDir = %q, want %q", c2.SessionsDir, c.SessionsDir)
 	}
-	if got := c2.GetToolPermissions("bash"); !reflect.DeepEqual(got, ToolPermissions{{Value: "*", Policy: PolicyAsk}}) {
+	if got := c2.GetToolPermissions("bash"); !reflect.DeepEqual(got, ToolPermissions{{Value: "*", Read: PolicyAsk, Write: PolicyAsk}}) {
 		t.Errorf("GetToolPermissions(bash) = %v, want one ask rule", got)
 	}
 }
@@ -149,11 +149,11 @@ func TestInitDefaultsKeepsSetValues(t *testing.T) {
 
 func TestSetToolPermissionsOnZeroConfig(t *testing.T) {
 	c := &GConfig{}
-	c.SetToolPermissions("ls", ToolPermissions{{Value: ".", Policy: PolicyAllow}})
+	c.SetToolPermissions("ls", ToolPermissions{{Value: ".", Read: PolicyAllow, Write: PolicyAllow}})
 	if c.Permissions == nil {
 		t.Fatal("Permissions = nil after SetToolPermissions")
 	}
-	want := ToolPermissions{{Value: ".", Policy: PolicyAllow}}
+	want := ToolPermissions{{Value: ".", Read: PolicyAllow, Write: PolicyAllow}}
 	if got := c.GetToolPermissions("ls"); !reflect.DeepEqual(got, want) {
 		t.Errorf("GetToolPermissions(ls) = %v, want %v", got, want)
 	}
