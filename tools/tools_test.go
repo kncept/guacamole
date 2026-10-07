@@ -28,7 +28,7 @@ func TestReadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, readFile, `{"path": "`+path(p)+`"}`)
+	out, err := run(t, ReadFile(nil).Handler, `{"path": "`+path(p)+`"}`)
 	if err != nil {
 		t.Fatalf("readFile: %v", err)
 	}
@@ -38,10 +38,10 @@ func TestReadFile(t *testing.T) {
 }
 
 func TestReadFileMissing(t *testing.T) {
-	if _, err := run(t, readFile, `{"path": "`+path(filepath.Join(t.TempDir(), "nope.txt"))+`"}`); err == nil {
+	if _, err := run(t, ReadFile(nil).Handler, `{"path": "`+path(filepath.Join(t.TempDir(), "nope.txt"))+`"}`); err == nil {
 		t.Fatal("readFile: expected error for a missing file, got nil")
 	}
-	if _, err := run(t, readFile, `{}`); err == nil {
+	if _, err := run(t, ReadFile(nil).Handler, `{}`); err == nil {
 		t.Fatal("readFile: expected error for empty path, got nil")
 	}
 }
@@ -52,7 +52,7 @@ func TestReadFileTruncates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, readFile, `{"path": "`+path(p)+`"}`)
+	out, err := run(t, ReadFile(nil).Handler, `{"path": "`+path(p)+`"}`)
 	if err != nil {
 		t.Fatalf("readFile: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestLs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := run(t, ls, `{"path": "`+path(dir)+`"}`)
+	out, err := run(t, Ls(nil).Handler, `{"path": "`+path(dir)+`"}`)
 	if err != nil {
 		t.Fatalf("ls: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestLs(t *testing.T) {
 }
 
 func TestLsEmptyAndMissing(t *testing.T) {
-	out, err := run(t, ls, `{"path": "`+path(t.TempDir())+`"}`)
+	out, err := run(t, Ls(nil).Handler, `{"path": "`+path(t.TempDir())+`"}`)
 	if err != nil {
 		t.Fatalf("ls: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestLsEmptyAndMissing(t *testing.T) {
 		t.Errorf("out = %q, want %q", out, "(empty directory)")
 	}
 
-	if _, err := run(t, ls, `{"path": "`+path(filepath.Join(t.TempDir(), "nope"))+`"}`); err == nil {
+	if _, err := run(t, Ls(nil).Handler, `{"path": "`+path(filepath.Join(t.TempDir(), "nope"))+`"}`); err == nil {
 		t.Fatal("ls: expected error for a missing directory, got nil")
 	}
 }
@@ -99,7 +99,7 @@ func TestLsEmptyAndMissing(t *testing.T) {
 func TestWriteFile(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "sub", "out.txt")
 
-	out, err := run(t, writeFile, `{"path": "`+path(target)+`", "content": "written"}`)
+	out, err := run(t, WriteFile(nil).Handler, `{"path": "`+path(target)+`", "content": "written"}`)
 	if err != nil {
 		t.Fatalf("writeFile: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestWriteFile(t *testing.T) {
 }
 
 func TestWriteFileEmptyPath(t *testing.T) {
-	if _, err := run(t, writeFile, `{"content": "x"}`); err == nil {
+	if _, err := run(t, WriteFile(nil).Handler, `{"content": "x"}`); err == nil {
 		t.Fatal("writeFile: expected error for empty path, got nil")
 	}
 }

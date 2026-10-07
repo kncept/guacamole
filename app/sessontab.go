@@ -12,6 +12,7 @@ import (
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/permissions"
 	"github.com/kncept/guacamole/restfulai"
 	"github.com/kncept/guacamole/roles/definitions"
 	"github.com/kncept/guacamole/tools"
@@ -25,6 +26,7 @@ type sessionTab struct {
 	tabs   *container.DocTabs
 	guac   *Guac
 	banner *sessionBanner
+	inputBoxArea *fyne.Container
 }
 
 // sessionBanner is the row of role and model selectors shown at the top of a
@@ -78,6 +80,7 @@ func (g *Guac) newSessionTab() *sessionTab {
 		input:  widget.NewEntry(),
 	}
 	st := &sessionTab{chat: c, tabs: g.tabs, guac: g}
+	st.inputBoxArea = st.inputBox()
 	// The banner's selectors must not pick defaults until it is attached to
 	// st: SetSelected fires the change callbacks, which read st.banner.
 	st.banner = newSessionBanner(g.models, g.roles,
@@ -101,7 +104,9 @@ func (st *sessionTab) session() *ai.Session {
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
-		sess.Tools = tools.AllTools()
+		granter := &guiGranter{tab: st}
+		manager := permissions.NewPermissionsManager(st.guac.config, granter)
+		sess.Tools = tools.AllTools(manager, &guiQuestionHandler{tab: st})
 		st.chat.session = sess
 	}
 	return st.chat.session
@@ -150,6 +155,95 @@ func (st *sessionTab) selectedModel() config.ModelOption {
 // inputBox builds the session's input area: a multi-line entry with a submit
 // button. It is placed in the bottom border of the session's tab, so each
 // session has its own input independent of the others.
+// guiGranter implements permissions.PerissionGranter by showing buttons in
+// place of the session's input box. The caller is blocked until the user
+// picks a policy, then the input box is restored.
+type guiGranter struct {
+	tab *sessionTab
+}
+
+func (g *guiGranter) AskForAccess(toolName string, toolValue string) config.Policy {
+	if g.tab == nil {
+		return config.PolicyDeny
+	}
+	answer := make(chan config.Policy, 1)
+	fmt.Printf("[Permission] %s wants %s\n", toolName, toolValue)
+
+	original := g.tab.inputBoxArea
+	fyne.Do(func() {
+		denyBtn := widget.NewButton("Deny Forever", func() { answer <- config.PolicyDeny })
+		thisTimeBtn := widget.NewButton("Allow this Time", func() { answer <- config.PolicyAllow })
+		alwaysBtn := widget.NewButton("Allow Always", func() { answer <- config.PolicyAllow })
+		g.tab.inputBoxArea = container.NewHBox(denyBtn, thisTimeBtn, alwaysBtn)
+		g.tab.updateInput()
+	})
+	p := <-answer
+	fyne.Do(func() {
+		g.tab.inputBoxArea = original
+		g.tab.updateInput()
+	})
+	return p
+}
+
+// updateInput rebuilds the tab so the new inputBoxArea is displayed.
+func (st *sessionTab) updateInput() {
+	st.guac.updateTab(st)
+}
+
+// guiQuestionHandler implements tools.UserQuestionCallbackHandler by showing
+// the question's suggested responses as buttons in place of the session's
+// input box. The caller is blocked until the user answers, then the input box
+// is restored.
+type guiQuestionHandler struct {
+	tab *sessionTab
+}
+
+func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []string, allowFreetext bool) (string, error) {
+	if g.tab == nil {
+		return "", fmt.Errorf("no session tab to ask the question in")
+	}
+	answer := make(chan string, 1)
+	fmt.Printf("[Question] %s\n", question)
+
+	original := g.tab.inputBoxArea
+	fyne.Do(func() {
+		row := container.NewHBox(widget.NewLabel(question))
+		for _, response := range responses {
+			// Late clicks after an answer was already given must not
+			// block the UI, so extra sends are dropped.
+			option := response
+			row.Add(widget.NewButton(option, func() {
+				select {
+				case answer <- option:
+				default:
+				}
+			}))
+		}
+		if allowFreetext {
+			entry := widget.NewEntry()
+			entry.OnSubmitted = func(text string) {
+				text = strings.TrimSpace(text)
+				if text == "" {
+					return
+				}
+				select {
+				case answer <- text:
+				default:
+				}
+			}
+			row.Add(entry)
+		}
+		g.tab.inputBoxArea = row
+		g.tab.updateInput()
+	})
+	a := <-answer
+	fyne.Do(func() {
+		g.tab.inputBoxArea = original
+		g.tab.updateInput()
+	})
+	return a, nil
+}
+
 func (st *sessionTab) inputBox() *fyne.Container {
 	input := st.chat.input
 	// Enable multi-line mode so that Enter inserts a newline instead of submitting.

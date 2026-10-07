@@ -61,7 +61,7 @@ resp, err := loop.Run(ctx, ai.Request{Prompt: "hello"})
 
 ```go
 session := ai.NewSession(loop)
-session.Tools = tools.AllTools(nil) // nil allows all writes
+session.Tools = tools.AllTools(nil, nil) // nil checker allows all writes; nil handler omits user_question
 session.Say(ctx, "my name is Ada")
 resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history is sent with every turn
 ```

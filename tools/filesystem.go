@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/permissions"
 )
 
 // maxReadBytes caps how much of a file read_file returns, so a huge file
@@ -19,12 +20,12 @@ import (
 const maxReadBytes = 64 * 1024
 
 // FileSystem returns all the file tools: read_file, ls and write_file.
-func FileSystem() []ai.Tool {
-	return []ai.Tool{ReadFile(), Ls(), WriteFile()}
+func FileSystem(checker AccessChecker) []ai.Tool {
+	return []ai.Tool{ReadFile(checker), Ls(checker), WriteFile(checker)}
 }
 
 // ReadFile returns a tool that reads the contents of a file.
-func ReadFile() ai.Tool {
+func ReadFile(checker AccessChecker) ai.Tool {
 	return ai.Tool{
 		Name:        "read_file",
 		Description: "Read the contents of a file.",
@@ -38,13 +39,27 @@ func ReadFile() ai.Tool {
 			},
 			"required": []string{"path"},
 		},
-		Handler: readFile,
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil {
+				return "", err
+			}
+			if a.Path == "" {
+				return "", errors.New("path is required")
+			}
+			if err := checkAccess(checker, "read_file", a.Path, permissions.AccessRead); err != nil {
+				return "", err
+			}
+			return readFile(ctx, args)
+		},
 	}
 }
 
 // Ls returns a tool that lists a directory's entries with basic info:
 // permissions, size in bytes, and name.
-func Ls() ai.Tool {
+func Ls(checker AccessChecker) ai.Tool {
 	return ai.Tool{
 		Name:        "ls",
 		Description: "List a directory's entries with basic info: permissions, size in bytes, name.",
@@ -57,13 +72,27 @@ func Ls() ai.Tool {
 				},
 			},
 		},
-		Handler: ls,
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				Path string `json:"path"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil {
+				return "", err
+			}
+			if a.Path == "" {
+				a.Path = "."
+			}
+			if err := checkAccess(checker, "ls", a.Path, permissions.AccessRead); err != nil {
+				return "", err
+			}
+			return ls(ctx, args)
+		},
 	}
 }
 
 // WriteFile returns a tool that writes content to a file, creating parent
 // directories as needed.
-func WriteFile() ai.Tool {
+func WriteFile(checker AccessChecker) ai.Tool {
 	return ai.Tool{
 		Name:        "write_file",
 		Description: "Write content to a file, creating parent directories as needed.",
@@ -81,8 +110,40 @@ func WriteFile() ai.Tool {
 			},
 			"required": []string{"path", "content"},
 		},
-		Handler: writeFile,
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
+			var a struct {
+				Path    string `json:"path"`
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(args, &a); err != nil {
+				return "", err
+			}
+			if a.Path == "" {
+				return "", errors.New("path is required")
+			}
+			if err := checkAccess(checker, "write_file", a.Path, permissions.AccessWrite); err != nil {
+				return "", err
+			}
+			return writeFile(ctx, args)
+		},
 	}
+}
+
+func checkAccess(checker AccessChecker, toolName, path string, access permissions.AccessKind) error {
+	if checker == nil {
+		return nil
+	}
+	allowed, err := checker.IsAllowedDirectory(toolName, path, access)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		if access == permissions.AccessWrite {
+			return fmt.Errorf("write access to %s denied", path)
+		}
+		return fmt.Errorf("read access to %s denied", path)
+	}
+	return nil
 }
 
 func readFile(ctx context.Context, args json.RawMessage) (string, error) {

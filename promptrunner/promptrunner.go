@@ -35,10 +35,12 @@ type PromptRunner interface {
 }
 
 type promptRunner struct {
-	loop        *ai.Loop
-	model       string
-	session     *ai.Session
-	sessionsDir string
+	loop            *ai.Loop
+	model           string
+	session         *ai.Session
+	sessionsDir     string
+	checker         tools.AccessChecker
+	questionHandler tools.UserQuestionCallbackHandler
 
 	// interactive reports whether stdin is a terminal. Only interactive
 	// runs get the "thinking..." indicator, so piped output stays clean.
@@ -50,7 +52,10 @@ type promptRunner struct {
 // is non-empty, the session with that ID is loaded from the sessions
 // directory and continues where it left off.
 // The sessions directory is taken from cfg (which applies its defaults).
-func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string) (PromptRunner, error) {
+// checker enforces tool permissions and questionHandler answers the model's
+// user_question tool; either may be nil, which allows every write and omits
+// user_question respectively.
+func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string, checker tools.AccessChecker, questionHandler tools.UserQuestionCallbackHandler) (PromptRunner, error) {
 	sessionsDir := cfg.SessionsDir
 
 	provider, err := restfulai.NewRestfulAI(conf)
@@ -59,9 +64,11 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig,
 	}
 
 	this := &promptRunner{
-		model:       conf.ModelName,
-		sessionsDir: sessionsDir,
-		interactive: isTerminal(os.Stdin),
+		model:           conf.ModelName,
+		sessionsDir:     sessionsDir,
+		checker:         checker,
+		questionHandler: questionHandler,
+		interactive:     isTerminal(os.Stdin),
 	}
 
 	loop := ai.NewLoop(provider)
@@ -94,7 +101,7 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig,
 		if err != nil {
 			return nil, err
 		}
-		session.Tools = this.tracedTools()
+		session.Tools = this.tracedTools(this.checker)
 		this.session = session
 		fmt.Printf("(resumed session %s: %d messages)\n", resumeID, len(session.Messages()))
 	} else {
@@ -125,7 +132,7 @@ func (this *promptRunner) RunPrompt(prompt string) error {
 func (this *promptRunner) Reset() {
 	this.session = ai.NewSession(this.loop)
 	this.session.Model = this.model
-	this.session.Tools = this.tracedTools()
+	this.session.Tools = this.tracedTools(this.checker)
 }
 
 func (this *promptRunner) SessionID() string {
@@ -138,8 +145,8 @@ func (this *promptRunner) Save() (string, error) {
 
 // tracedTools wraps the file tools so every call is printed: tool activity
 // must be visible, otherwise a tool round looks like a hung prompt.
-func (this *promptRunner) tracedTools() []ai.Tool {
-	ts := tools.AllTools()
+func (this *promptRunner) tracedTools(checker tools.AccessChecker) []ai.Tool {
+	ts := tools.AllTools(checker, this.questionHandler)
 	for i := range ts {
 		name := ts[i].Name
 		handler := ts[i].Handler

@@ -105,9 +105,14 @@ func (g *Guac) refreshContent() {
 // scrollable output in the middle, and the session's input box at the bottom.
 func (g *Guac) updateTab(st *sessionTab) {
 	st.chat.output.SetText(strings.Join(st.chat.messages, "\n"))
-	content := container.NewBorder(st.banner.box, st.inputBox(), nil, nil, container.NewVScroll(st.chat.output))
-	st.tab = container.NewTabItem(st.chat.id, content)
-	st.tabs.Append(st.tab)
+	content := container.NewBorder(st.banner.box, st.inputBoxArea, nil, nil, container.NewVScroll(st.chat.output))
+	if st.tab == nil {
+		st.tab = container.NewTabItem(st.chat.id, content)
+		st.tabs.Append(st.tab)
+	} else {
+		st.tab.Content = content
+		content.Refresh()
+	}
 }
 
 // onTabClosed handles the X button on a tab.

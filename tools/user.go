@@ -8,16 +8,18 @@ import (
 	"github.com/kncept/guacamole/ai"
 )
 
-func User(liveCallback UserQuestionCallback) []ai.Tool {
+func User(callbackHandler UserQuestionCallbackHandler) []ai.Tool {
 	return []ai.Tool{
-		UserQuestion(liveCallback),
+		UserQuestion(callbackHandler),
 	}
 }
 
-type UserQuestionCallback func(questions string, responses []string, allowFreetext bool) (string, error)
+type UserQuestionCallbackHandler interface {
+	UserQuestionCallback(questions string, responses []string, allowFreetext bool) (string, error)
+}
 
 // needs a CALLBACK
-func UserQuestion(liveCallback UserQuestionCallback) ai.Tool {
+func UserQuestion(callbackHandler UserQuestionCallbackHandler) ai.Tool {
 	return ai.Tool{
 		Name:        "user_question",
 		Description: "Ask the user a question and return their answer",
@@ -52,7 +54,7 @@ func UserQuestion(liveCallback UserQuestionCallback) ai.Tool {
 			if len(a.Responses) > 8 {
 				return "", fmt.Errorf("A maxiumum of 8 options are allowed")
 			}
-			return liveCallback(a.Question, a.Responses, a.Freetext)
+			return callbackHandler.UserQuestionCallback(a.Question, a.Responses, a.Freetext)
 		},
 	}
 }
