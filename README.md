@@ -1,12 +1,10 @@
 # Guacamole
 
-N.B. Guacamole is in early WIP, but is showing great promise.
-
 Tired of having to change AI tool every time you need to ask a detailed question on a different subject?
 
 Guacomole - Allowing you to easily switch experts within the same prompt, so that you can get a full 360 degree understanding of your interest.
 
-Tokenmaxxing? Or just need the BEST AI response, regardless of the model? Enable Magi Mode - Multi AI operation to ensure that only the highest quality responses are included
+Absolutely need the BEST AI response, regardless of the model? Or just Tokenmaxxing? Enable Magi Mode - Multi AI operation to ensure that only the highest quality responses are included
 
 ## Cool Tech Things
 
@@ -100,7 +98,6 @@ resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history 
 
 The REPL (`promptrunner`) is built on top of it: each prompt goes through a streaming session and prints chunks as they arrive, so a conversation has memory until you type `/new`. Tool calls are printed as they run (e.g. `→ read_file {"path":"go.mod"}`).
 
-## Cool things TODO
+# Why Guac?
 
-1. Add a 'Magi' mode (default 3)  where agents vote on the best answer
-2. Interactions Modes. Default to REPL, but add a GUI mode as well.
+From GoCliForAI. This idea started from a small seed, and just kept growing
