@@ -267,8 +267,15 @@ Patterns:
 			"type": "object",
 			"properties": map[string]any{
 				"pattern": map[string]any{
-					"type":        "string",
-					"description": "Doublestar glob pattern",
+					"type": "string",
+					"description": `Doublestar glob pattern
+Patterns:
+- * matches any sequence of non-path-separators
+- ** matches zero or more directories (surrounded by separators like /**/)
+- ? matches any single non-path-separator
+- [class] character classes (ranges, negation with ^ or !)
+- {alt1,...} alternation
+- Backslash escapes special chars`,
 				},
 				"path": map[string]any{
 					"type":        "string",

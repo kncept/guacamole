@@ -64,6 +64,11 @@ func New() *Guac {
 	g.prefsTab = container.NewTabItemWithIcon("", theme.SettingsIcon(), widget.NewLabel("Preferences"))
 	g.tabs.SetItems(append([]*container.TabItem{g.prefsTab}, g.tabs.Items...))
 
+	// DocTabs opens on index 0 by default, so without this the application
+	// would start on the pinned Preferences tab. Select the first session
+	// instead.
+	g.tabs.Select(g.sessions[g.activeIdx].tab)
+
 	g.buildMenu()
 	g.refreshContent()
 	g.w.Resize(fyne.NewSize(600, 400))
@@ -220,7 +225,15 @@ func (g *Guac) buildMenu() {
 		g.showPreferences()
 	})
 
-	fileMenu := fyne.NewMenu("File", newTabItem, fyne.NewMenuItemSeparator(), preferencesItem)
+	fileMenu := fyne.NewMenu("File",
+		newTabItem,
+		fyne.NewMenuItemSeparator(),
+		preferencesItem,
+		fyne.NewMenuItemSeparator(),
+		fyne.NewMenuItem("Quit", func() {
+			g.a.Quit()
+		}),
+	)
 	helpMenu := fyne.NewMenu("About",
 		fyne.NewMenuItem("About", func() {
 			g.w.SetContent(container.NewVBox(
