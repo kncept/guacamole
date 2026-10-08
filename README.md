@@ -11,7 +11,7 @@ Tokenmaxxing? Or just need the BEST AI response, regardless of the model? Enable
 ## Cool Tech Things
 
 1. Runs a chat session with history — saved to `~/.guac/session/<session ID>.json` after every turn and resumable with `--ses <session ID>`
-2. Tool use: the model can call `read_file`, `ls` and `write_file` to work with the local filesystem; every call is printed as it happens, and writes need your approval
+2. Tool use: the model can call `read_file`, `ls` and `write_file` to work with the local filesystem, run shell commands, and fetch URLs with `http_fetch`; every call is printed as it happens, and the permission categories decide what needs your approval
 3. Has an `ai` package that factors out the request/processing/response loop every AI tool runs
 
 ## Sessions
@@ -23,14 +23,46 @@ Every conversation is a session with a random ID. The session is saved after eve
 
 ## Permissions
 
-`write_file` needs your approval per directory. The first time the model tries to write into a directory you get a `[Y/n]` prompt:
+Permissions are grouped into three categories, all persisted in `~/.guac/config.json`:
+
+| Category | Rules | Enforced on |
+|---|---|---|
+| **Filesystem** | Read/Write tracked per directory, plus an `allowAll` override | `read_file`, `ls`, `write_file`, `glob`, `edit_file`, `create_directory`, `move_file`, `list_allowed_directories` |
+| **Shell** | One `allow`/`ask`/`deny` policy for *all* shell operations | every shell tool (`bash`, `sh`, `zsh`) |
+| **Web** | `allow`/`ask`/`deny` per domain, plus an `allowAll` override | `http_fetch`, including every redirect target |
+
+```json
+{
+  "permissions": {
+    "filesystem": {
+      "allowAll": false,
+      "directories": [
+        {"directory": "/home/me/notes", "read": "allow", "write": "allow"},
+        {"directory": "/etc", "read": "deny", "write": "deny"}
+      ]
+    },
+    "shell": {"policy": "ask"},
+    "web": {
+      "allowAll": false,
+      "domains": [{"domain": "example.com", "policy": "allow"}]
+    }
+  }
+}
+```
+
+The first time the model touches a path, runs a command or fetches a domain with no settled rule, you get a prompt:
 
 ```
 → write_file {"path":"notes/todo.md","content":"..."}
-Grant write access to /home/me/notes (and its subdirectories)? [Y/n]
+Grant filesystem write access to /home/me/notes/todo.md? [y/N]
 ```
 
-Granting covers that directory and everything under it, forever: grants are persisted in `~/.guac/permissions.json`, so you are never asked twice about the same directory. Denying (or Ctrl-D) sends the error back to the model as the tool result, and it will be asked again next time.
+- **Filesystem**: a directory grant covers that directory and everything under it; the most specific directory wins, and reads and writes are tracked separately. `list_allowed_directories` reports exactly this subset.
+- **Shell**: one answer settles the policy for every command in every shell.
+- **Web**: a domain rule also covers its subdomains (`example.com` covers `api.example.com`).
+- **`allowAll`** (filesystem and web) is an override: everything is allowed without asking and the individual rules are ignored.
+
+Granting or denying is persisted in `~/.guac/config.json`, so you are never asked twice about the same thing. Denying (or Ctrl-D) sends the error back to the model as the tool result and stays denied until you change the config.
 
 ## The `ai` package
 
@@ -56,12 +88,12 @@ resp, err := loop.Run(ctx, ai.Request{Prompt: "hello"})
 - `ai.Processor` — transforms or validates the final `Response`; may fail the attempt, which the loop then retries.
 - `ai.Loop` — `Run` executes request → processing → response, retrying transient failures and never retrying a cancelled context or an aborted stream.
 - `ai.Session` — a stateful conversation on top of a `Loop`: `Say` appends each user message to the history, sends the whole conversation, and records the reply. Failed turns leave the history untouched; `Clear` starts over. Every session has a random ID, and `sessionstore` saves/loads sessions as JSON files (`<dir>/<session ID>.json`).
-- `ai.Tool` — a function the model can call: name, description, JSON Schema parameters, and a `ToolHandler`. When a response requests tool calls, `Say` executes them, appends the calls and results to the history, and runs again until the model answers — up to `MaxToolRounds`. Handler errors become tool results so the model can recover. The `tools` package provides `read_file`, `ls` and `write_file`; `write_file` takes an `allowWrite` guard, which the `permissions` package implements with per-directory grants persisted to `~/.guac/permissions.json`.
+- `ai.Tool` — a function the model can call: name, description, JSON Schema parameters, and a `ToolHandler`. When a response requests tool calls, `Say` executes them, appends the calls and results to the history, and runs again until the model answers — up to `MaxToolRounds`. Handler errors become tool results so the model can recover. The `tools` package provides the filesystem tools (`read_file`, `ls`, `write_file`, `glob`, `edit_file`, `create_directory`, `move_file`, `list_allowed_directories`), one shell tool per installed shell, and `http_fetch`; the `permissions` package enforces them through the three permission categories (filesystem, shell, web) persisted in `~/.guac/config.json`.
 - Hooks: `OnRequest`, `OnChunk`, `OnResponse`, `OnError` for logging, debugging, and UIs.
 
 ```go
 session := ai.NewSession(loop)
-session.Tools = tools.AllTools(nil, nil) // nil checker allows all writes; nil handler omits user_question
+session.Tools = tools.AllTools(nil, nil) // nil checker allows everything; nil handler omits user_question
 session.Say(ctx, "my name is Ada")
 resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history is sent with every turn
 ```

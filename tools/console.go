@@ -16,12 +16,12 @@ var shells = []string{"bash", "sh", "zsh"}
 
 // Console returns one tool per shell available on the system (found via
 // the PATH). Each tool is named after its shell and runs commands through
-// it.
-func Console() []ai.Tool {
+// it. Every command is checked against the shell permission category first.
+func Console(checker AccessChecker) []ai.Tool {
 	var out []ai.Tool
 	for _, shell := range shells {
 		if _, err := exec.LookPath(shell); err == nil {
-			out = append(out, Shell(shell))
+			out = append(out, Shell(checker, shell))
 		}
 	}
 	return out
@@ -29,7 +29,7 @@ func Console() []ai.Tool {
 
 // Shell returns a tool that runs a command through the named console
 // shell (e.g. "bash" invokes `bash -c <command>`).
-func Shell(name string) ai.Tool {
+func Shell(checker AccessChecker, name string) ai.Tool {
 	return ai.Tool{
 		Name:        name,
 		Description: fmt.Sprintf("Run a command using %s.", name),
@@ -53,6 +53,9 @@ func Shell(name string) ai.Tool {
 			if a.Command == "" {
 				return "", errors.New("command is required")
 			}
+			if err := checkShellAccess(checker, a.Command); err != nil {
+				return "", err
+			}
 			cmd := exec.CommandContext(ctx, name, "-c", a.Command)
 			var buf bytes.Buffer
 			cmd.Stdout = &buf
@@ -65,4 +68,20 @@ func Shell(name string) ai.Tool {
 			return out, nil
 		},
 	}
+}
+
+// checkShellAccess applies the generic shell policy (allow/ask/deny for all
+// shell operations) to a command line.
+func checkShellAccess(checker AccessChecker, command string) error {
+	if checker == nil {
+		return nil
+	}
+	allowed, err := checker.IsAllowedShellCommand(command)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return fmt.Errorf("shell access denied for command: %s", command)
+	}
+	return nil
 }

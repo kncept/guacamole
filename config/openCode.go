@@ -154,8 +154,8 @@ type json_OpenCode_options struct {
 	ApiKey  string `json:"apiKey"`
 }
 type json_OpenCode_V1 struct {
-	Model    string                               `json:"model"`
-	Schema   string                               `json:"$schema"`
+	Model     string                               `json:"model"`
+	Schema    string                               `json:"$schema"`
 	Providers map[string]json_OpenCode_V1_provider `json:"provider"`
 }
 type json_OpenCode_V1_provider struct {
@@ -170,12 +170,12 @@ type json_OpenCode_V1_model struct {
 // ModelOption describes one model usable through the opencode config,
 // including the provider connection details needed to call it.
 type ModelOption struct {
-	ProviderID  string
-	Provider    string
-	ModelID     string
-	ModelName   string
-	BaseURL     string
-	APIKey      string
+	ProviderID string
+	Provider   string
+	ModelID    string
+	ModelName  string
+	BaseURL    string
+	APIKey     string
 }
 
 // Label returns a human-readable "provider / model" identifier.

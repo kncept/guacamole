@@ -4,6 +4,7 @@ import (
 	"fyne.io/fyne/v2"
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/kncept/guacamole/ai"
@@ -27,13 +28,14 @@ type Guac struct {
 	w         fyne.Window
 	tabs      *container.DocTabs
 	newTab    *container.TabItem
+	prefsTab  *container.TabItem // pinned leftmost; swaps to the Preferences screen
 	sessions  []*sessionTab
 	activeIdx int
 	count     int // monotonic counter for naming sessions
 	models    []config.ModelOption
 	roles     []definitions.Role
 	config    *config.GConfig
-	prefs     *preferencesWindow // lazily created Preferences window
+	prefs     *preferencesScreen // in-window Preferences screen, lazily created
 }
 
 // New creates and initializes a new Guac GUI application.
@@ -56,6 +58,11 @@ func New() *Guac {
 	// "New Session" tab — always rightmost, creates a new session when clicked.
 	g.newTab = container.NewTabItem("New Session", widget.NewLabel("Click to create new session"))
 	g.tabs.Append(g.newTab)
+
+	// "Preferences" tab — pinned leftmost. Clicking it swaps the window
+	// content to the Preferences screen instead of opening a session tab.
+	g.prefsTab = container.NewTabItemWithIcon("", theme.SettingsIcon(), widget.NewLabel("Preferences"))
+	g.tabs.SetItems(append([]*container.TabItem{g.prefsTab}, g.tabs.Items...))
 
 	g.buildMenu()
 	g.refreshContent()
@@ -98,6 +105,22 @@ func (g *Guac) refreshContent() {
 	g.w.Resize(fyne.NewSize(600, 400))
 }
 
+// backToSessions returns from a full-window screen (the Preferences screen) to
+// the session tabs, highlighting the active session. Called by that screen's
+// Back button.
+func (g *Guac) backToSessions() {
+	g.w.SetContent(g.tabs)
+	if len(g.sessions) > 0 {
+		if st := g.sessions[g.activeIdx]; st.tab != nil {
+			// Select re-fires OnSelected (which picks activeIdx and
+			// refreshes), and also moves the highlight off the pinned
+			// Preferences tab so it can be clicked again.
+			g.tabs.Select(st.tab)
+		}
+	}
+	g.refreshContent()
+}
+
 // updateTab creates/refreshes the tab item for the session and appends it to
 // its container. Each tab gets its own border: the banner on top, the
 // scrollable log in the middle, and the session's input box at the bottom.
@@ -114,7 +137,7 @@ func (g *Guac) updateTab(st *sessionTab) {
 
 // onTabClosed handles the X button on a tab.
 func (g *Guac) onTabClosed(item *container.TabItem) {
-	if item.Text == "New Session" {
+	if item == g.prefsTab || item.Text == "New Session" {
 		return
 	}
 	sessIdx := -1
@@ -133,10 +156,15 @@ func (g *Guac) onTabClosed(item *container.TabItem) {
 		st := g.newSessionTab()
 		g.sessions = append(g.sessions, st)
 		g.updateTab(st)
-		// Move the new tab before the "New Session" tab
-		newItem := g.tabs.Items[len(g.tabs.Items)-1]
-		rest := g.tabs.Items[:len(g.tabs.Items)-1]
-		g.tabs.SetItems(append([]*container.TabItem{newItem}, rest...))
+		// Rebuild the strip as [Preferences, <the one session>, New Session]:
+		// the new session tab must sit before "New Session", and the
+		// pinned Preferences tab must stay leftmost.
+		items := make([]*container.TabItem, 0, 3)
+		if g.prefsTab != nil {
+			items = append(items, g.prefsTab)
+		}
+		items = append(items, st.tab, g.newTab)
+		g.tabs.SetItems(items)
 	}
 	if g.activeIdx >= len(g.sessions) {
 		g.activeIdx = len(g.sessions) - 1
@@ -144,12 +172,16 @@ func (g *Guac) onTabClosed(item *container.TabItem) {
 	if g.activeIdx < 0 {
 		g.activeIdx = 0
 	}
-	g.tabs.SelectIndex(g.activeIdx)
+	g.tabs.Select(g.sessions[g.activeIdx].tab)
 	g.refreshContent()
 }
 
 // onTabSelected handles switching between tabs.
 func (g *Guac) onTabSelected(selected *container.TabItem) {
+	if selected == g.prefsTab {
+		g.showPreferences()
+		return
+	}
 	if selected.Text == "New Session" {
 		st := g.newSessionTab()
 		g.sessions = append(g.sessions, st)
@@ -184,7 +216,7 @@ func (g *Guac) buildMenu() {
 		g.refreshContent()
 	})
 
-	preferencesItem := fyne.NewMenuItem("Preferences...", func() {
+	preferencesItem := fyne.NewMenuItem("Preferences", func() {
 		g.showPreferences()
 	})
 

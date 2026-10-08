@@ -27,6 +27,10 @@ locations](#configuration-and-data-locations)).
 The main window (titled **Guacamole GUI**, opens at 600×400) is a tab bar of
 chat sessions. Each session is its own tab.
 
+The leftmost item is a pinned **Preferences** tab (a gear icon). It is not a
+session: clicking it replaces the window content with the Preferences screen
+(see [Preferences](#preferences)). Every other tab is a session.
+
 A session tab is laid out as a vertical stack:
 
 | Region | Widget | Purpose |
@@ -96,7 +100,7 @@ The main window menu has two top-level menus:
 
 - **File**
   - **New Tab** — create a new session tab.
-  - **Preferences…** — open the Preferences window (see below).
+  - **Preferences** — open the Preferences screen (see below).
 - **About**
   - **About** — shows a short about screen:
     *“Guacamole GUI — A simple Fyne GUI with tabbed sessions.”*
@@ -105,9 +109,16 @@ The main window menu has two top-level menus:
 
 ## Preferences
 
-Opened from **File → Preferences…**. The window (titled **Preferences**, 720×480)
-is split: a list of sections on the left, the selected section's screen on the
-right. Sections:
+Opened from the pinned gear tab at the far left of the tab bar (or **File →
+Preferences**). Opening it swaps the main window's content over to the
+Preferences screen rather than opening a new tab; the tab bar is replaced while
+it is shown.
+
+The screen is a **Back** button and a *Preferences* title on top, with a list
+of sections on the left and the selected section's screen on the right. The
+last-viewed section is remembered the next time you open Preferences. **Back**
+returns to the conversation tabs, reselecting the session you were on.
+Sections:
 
 ### Models
 
@@ -159,7 +170,7 @@ effect the next time the GUI is launched.
 | `cmd/gui/main.go` | Entry point — creates the app and starts the event loop |
 | `app/app.go` | The `Guac` app: main window, tabs, menu, session lifecycle |
 | `app/sessontab.go` | One session tab: banner, input, output, prompt handling |
-| `app/preferences.go` | The Preferences window (Models, Roles, Sessions) |
+| `app/preferences.go` | The Preferences screen (Models, Roles, Sessions) |
 | `config` | Loads models and provider connection details |
 | `roles` | Loads roles (system prompts) |
 | `sessionstore` | Lists/deletes saved session files |
@@ -167,8 +178,11 @@ effect the next time the GUI is launched.
 
 ### Key types
 
-- **`Guac`** — owns the window, tab container, the list of session tabs, the
-  loaded models/roles, and the (lazily created) Preferences window.
+- **`Guac`** — owns the window, tab container (including the pinned
+  Preferences tab), the list of session tabs, the loaded models/roles, and the
+  (lazily built) Preferences screen.
+- **`preferencesScreen`** — the in-window Preferences screen: Back button,
+  section navigation, and the Models / Roles / Sessions panels.
 - **`sessionTab`** — bundles a chat session with its tab item, banner, and
   layout. Knows where it is displayed and which model/role it uses.
 - **`sessionBanner`** — the role and model selectors at the top of a tab, plus

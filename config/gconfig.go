@@ -20,26 +20,59 @@ const (
 	PolicyAsk   Policy = "ask"
 )
 
-// Permission is one rule for a tool: a value (e.g. a directory path) and the
-// policies that apply to reads and writes of that value.
-type Permission struct {
-	Value string `json:"value"`
-	Read  Policy `json:"read"`
-	Write Policy `json:"write"`
+// Permissions holds every permission rule, grouped by category: filesystem,
+// shell and web.
+type Permissions struct {
+	Filesystem FilesystemPermissions `json:"filesystem"`
+	Shell      ShellPermissions      `json:"shell"`
+	Web        WebPermissions        `json:"web"`
 }
 
-// ToolPermissions is the list of permission rules for one tool.
-type ToolPermissions []Permission
+// FilesystemPermissions tracks read and write access per directory.
+// AllowAll is an override: when set, every path is allowed without asking
+// and the directory rules are ignored.
+type FilesystemPermissions struct {
+	AllowAll    bool                  `json:"allowAll"`
+	Directories []DirectoryPermission `json:"directories"`
+}
+
+// DirectoryPermission is one rule: reads and writes under Directory (and
+// everything below it) follow the given policies.
+type DirectoryPermission struct {
+	Directory string `json:"directory"`
+	Read      Policy `json:"read"`
+	Write     Policy `json:"write"`
+}
+
+// ShellPermissions is a single allow/ask/deny policy shared by every shell
+// operation; unlike the other categories it has no per-value rules.
+type ShellPermissions struct {
+	Policy Policy `json:"policy"`
+}
+
+// WebPermissions tracks access per domain. AllowAll is an override: when
+// set, every domain is allowed without asking and the domain rules are
+// ignored.
+type WebPermissions struct {
+	AllowAll bool               `json:"allowAll"`
+	Domains  []DomainPermission `json:"domains"`
+}
+
+// DomainPermission is one rule: requests to Domain (and its subdomains)
+// follow Policy.
+type DomainPermission struct {
+	Domain string `json:"domain"`
+	Policy Policy `json:"policy"`
+}
 
 // GConfig is the basis of the ~/.guac/config.json file: the directories
-// guacamole uses, and the permission rules for each tool.
+// guacamole uses, and the category-based permission rules.
 type GConfig struct {
 	// SessionsDir is where saved sessions live. Left empty it defaults to
 	// ~/.guac/session via InitDefaults.
 	SessionsDir string `json:"sessionsDir"`
-	// Permissions holds the permission rules of each tool, keyed by tool
-	// name (e.g. "read_file", "bash").
-	Permissions map[string]ToolPermissions `json:"permissions"`
+	// Permissions holds the permission rules of each category.
+	Permissions Permissions `json:"permissions"`
 }
 
 // Load reads GConfig from GuacDir()/config.json — an empty config when the
@@ -73,8 +106,9 @@ func (this *GConfig) InitDefaults() {
 			this.SessionsDir = filepath.Join(dir, "session")
 		}
 	}
-	if this.Permissions == nil {
-		this.Permissions = map[string]ToolPermissions{}
+	if this.Permissions.Shell.Policy == "" {
+		// An unset shell policy means "ask before every shell command".
+		this.Permissions.Shell.Policy = PolicyAsk
 	}
 }
 
@@ -93,18 +127,4 @@ func (this *GConfig) Save() error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, configFileName), data, 0o644)
-}
-
-// GetToolPermissions returns the permission rules for the named tool. A tool
-// with no rules returns an empty list.
-func (this *GConfig) GetToolPermissions(toolname string) ToolPermissions {
-	return this.Permissions[toolname]
-}
-
-// SetToolPermissions stores the permission rules for the named tool.
-func (this *GConfig) SetToolPermissions(toolname string, permissions ToolPermissions) {
-	if this.Permissions == nil {
-		this.Permissions = map[string]ToolPermissions{}
-	}
-	this.Permissions[toolname] = permissions
 }

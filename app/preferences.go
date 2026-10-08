@@ -4,6 +4,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/kncept/guacamole/config"
@@ -14,32 +15,34 @@ import (
 // display order. Each one names a screen built by screenFor.
 var preferenceSections = []string{"Models", "Roles", "Sessions"}
 
-// preferencesWindow is the Preferences window: a list of sections down the
-// left side (a vertical tab list) and the selected section's screen on the
-// right. It keeps a reference to the Guac it belongs to, so every screen can
-// read the application's live models, roles, and saved sessions.
-type preferencesWindow struct {
+// preferencesScreen is the in-window Preferences screen: a Back button on
+// top, a list of sections down the left side (a vertical tab list) and the
+// selected section's screen on the right. It keeps the last viewed section so
+// returning to the screen shows it again. It shares the main window with the
+// sessions instead of living in its own window, so opening it replaces the
+// window content.
+type preferencesScreen struct {
 	guac *Guac
-	win  fyne.Window
 
 	nav     *widget.List
 	body    *fyne.Container
 	section int
 }
 
-// showPreferences opens the Preferences window, re-raising it if it is
-// already open so there is only ever one.
+// showPreferences replaces the window content with the Preferences screen.
+// Called from the pinned Preferences tab and from File → Preferences.
 func (g *Guac) showPreferences() {
 	if g.prefs == nil {
-		g.prefs = newPreferencesWindow(g)
+		g.prefs = &preferencesScreen{guac: g}
 	}
-	g.prefs.win.Show()
-	g.prefs.win.RequestFocus()
+	g.w.SetContent(g.prefs.content())
+	// Select the last viewed section; OnSelected fills in its screen.
+	g.prefs.nav.Select(g.prefs.section)
 }
 
-func newPreferencesWindow(g *Guac) *preferencesWindow {
-	p := &preferencesWindow{guac: g}
-
+// content builds the Preferences screen: a header with a Back button over the
+// section list and body.
+func (p *preferencesScreen) content() fyne.CanvasObject {
 	p.nav = widget.NewList(
 		func() int { return len(preferenceSections) },
 		func() fyne.CanvasObject { return widget.NewLabel("Models") },
@@ -47,32 +50,28 @@ func newPreferencesWindow(g *Guac) *preferencesWindow {
 			obj.(*widget.Label).SetText(preferenceSections[id])
 		},
 	)
+	p.body = container.NewMax()
 	p.nav.OnSelected = func(id widget.ListItemID) { p.showSection(int(id)) }
 
-	p.body = container.NewMax()
 	split := container.NewHSplit(p.nav, p.body)
 	split.Offset = 0.25
 
-	p.win = g.a.NewWindow("Preferences")
-	// Hide instead of close: a closed window's content is freed by Fyne,
-	// which would leave the window blank the next time it is opened.
-	p.win.SetCloseIntercept(func() { p.win.Hide() })
-	p.win.SetContent(split)
-	p.win.Resize(fyne.NewSize(720, 480))
-
-	p.nav.Select(0)
-	return p
+	header := container.NewHBox(
+		widget.NewButtonWithIcon("Back", theme.NavigateBackIcon(), p.guac.backToSessions),
+		widget.NewLabelWithStyle("Preferences", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	)
+	return container.NewBorder(header, nil, nil, nil, split)
 }
 
 // showSection installs the screen for preferenceSections[id] on the right
-// hand side of the window.
-func (p *preferencesWindow) showSection(id int) {
+// hand side of the Preferences screen.
+func (p *preferencesScreen) showSection(id int) {
 	p.section = id
 	p.body.Objects = []fyne.CanvasObject{p.screenFor(preferenceSections[id])}
 	p.body.Refresh()
 }
 
-func (p *preferencesWindow) screenFor(name string) fyne.CanvasObject {
+func (p *preferencesScreen) screenFor(name string) fyne.CanvasObject {
 	switch name {
 	case "Models":
 		return p.modelsScreen()
@@ -86,7 +85,7 @@ func (p *preferencesWindow) screenFor(name string) fyne.CanvasObject {
 
 // modelsScreen lists every configured provider with the models it offers,
 // grouped under a provider heading.
-func (p *preferencesWindow) modelsScreen() fyne.CanvasObject {
+func (p *preferencesScreen) modelsScreen() fyne.CanvasObject {
 	models := p.guac.models
 	if len(models) == 0 {
 		return paddedLabel("No models found. Add providers to your opencode configuration.")
@@ -125,7 +124,7 @@ func providerHeading(m config.ModelOption) string {
 
 // rolesScreen lists the roles (system prompts). Selecting a role shows its
 // system prompt underneath the list.
-func (p *preferencesWindow) rolesScreen() fyne.CanvasObject {
+func (p *preferencesScreen) rolesScreen() fyne.CanvasObject {
 	roles := p.guac.roles
 	if len(roles) == 0 {
 		return paddedLabel("No roles found.")
@@ -163,7 +162,7 @@ func (p *preferencesWindow) rolesScreen() fyne.CanvasObject {
 
 // sessionsScreen lists the sessions saved on disk, each with a delete
 // button.
-func (p *preferencesWindow) sessionsScreen() fyne.CanvasObject {
+func (p *preferencesScreen) sessionsScreen() fyne.CanvasObject {
 	dir := p.guac.config.SessionsDir
 	ids, err := sessionstore.List(dir)
 	if err != nil {
@@ -181,7 +180,7 @@ func (p *preferencesWindow) sessionsScreen() fyne.CanvasObject {
 }
 
 // sessionRow is one saved session: its ID with a delete button on the right.
-func (p *preferencesWindow) sessionRow(dir, id string) fyne.CanvasObject {
+func (p *preferencesScreen) sessionRow(dir, id string) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil,
 		widget.NewButton("Delete", func() { p.deleteSession(dir, id) }),
 		widget.NewLabel(id))
@@ -189,9 +188,9 @@ func (p *preferencesWindow) sessionRow(dir, id string) fyne.CanvasObject {
 
 // deleteSession removes the saved session and rebuilds the section so the
 // list no longer shows it.
-func (p *preferencesWindow) deleteSession(dir, id string) {
+func (p *preferencesScreen) deleteSession(dir, id string) {
 	if err := sessionstore.Delete(dir, id); err != nil {
-		dialog.ShowError(err, p.win)
+		dialog.ShowError(err, p.guac.w)
 		return
 	}
 	p.showSection(p.section)

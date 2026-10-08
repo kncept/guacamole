@@ -1,5 +1,7 @@
-// Package tools implements the ai.Tool functions the model can call:
-// read_file, ls and write_file.
+// Package tools implements the ai.Tool functions the model can call: the
+// filesystem tools, the shell tools, http_fetch and user questions. Every
+// tool that touches something outside the conversation checks the matching
+// permission category through an AccessChecker first.
 package tools
 
 import (
@@ -22,12 +24,9 @@ import (
 // cannot flood the conversation.
 const maxReadBytes = 64 * 1024
 
-// FileSystem returns all the file tools: read_file, ls and write_file.
-func FileSystem(checker AccessChecker, cfg ...interface{}) []ai.Tool {
-	var gcfg interface{}
-	if len(cfg) > 0 {
-		gcfg = cfg[0]
-	}
+// FileSystem returns all the file tools: read_file, ls, write_file, glob,
+// edit_file, create_directory, move_file and list_allowed_directories.
+func FileSystem(checker AccessChecker) []ai.Tool {
 	return []ai.Tool{
 		ReadFile(checker),
 		Ls(checker),
@@ -36,7 +35,7 @@ func FileSystem(checker AccessChecker, cfg ...interface{}) []ai.Tool {
 		EditFile(checker),
 		CreateDirectory(checker),
 		MoveFile(checker),
-		ListAllowedDirectories(checker, gcfg),
+		ListAllowedDirectories(checker),
 	}
 }
 
@@ -65,7 +64,7 @@ func ReadFile(checker AccessChecker) ai.Tool {
 			if a.Path == "" {
 				return "", errors.New("path is required")
 			}
-			if err := checkAccess(checker, "read_file", a.Path, permissions.AccessRead); err != nil {
+			if err := checkAccess(checker, a.Path, permissions.AccessRead); err != nil {
 				return "", err
 			}
 			return readFile(ctx, args)
@@ -105,7 +104,7 @@ func Ls(checker AccessChecker) ai.Tool {
 			}
 			a.Path = absPath
 
-			if err := checkAccess(checker, "ls", a.Path, permissions.AccessRead); err != nil {
+			if err := checkAccess(checker, a.Path, permissions.AccessRead); err != nil {
 				return "", err
 			}
 			return ls(ctx, args)
@@ -144,7 +143,7 @@ func WriteFile(checker AccessChecker) ai.Tool {
 			if a.Path == "" {
 				return "", errors.New("path is required")
 			}
-			if err := checkAccess(checker, "write_file", a.Path, permissions.AccessWrite); err != nil {
+			if err := checkAccess(checker, a.Path, permissions.AccessWrite); err != nil {
 				return "", err
 			}
 			return writeFile(ctx, args)
@@ -152,11 +151,11 @@ func WriteFile(checker AccessChecker) ai.Tool {
 	}
 }
 
-func checkAccess(checker AccessChecker, toolName, path string, access permissions.AccessKind) error {
+func checkAccess(checker AccessChecker, path string, access permissions.AccessKind) error {
 	if checker == nil {
 		return nil
 	}
-	allowed, err := checker.IsAllowedDirectory(toolName, path, access)
+	allowed, err := checker.IsAllowedPath(path, access)
 	if err != nil {
 		return err
 	}
@@ -297,7 +296,7 @@ Patterns:
 			if err != nil {
 				return "", err
 			}
-			if err := checkAccess(checker, "glob", absBase, permissions.AccessRead); err != nil {
+			if err := checkAccess(checker, absBase, permissions.AccessRead); err != nil {
 				return "", err
 			}
 			matches, err := doublestar.FilepathGlob(filepath.Join(absBase, a.Pattern))
@@ -367,7 +366,7 @@ Use "regex" mode for pattern matching; use "string" mode for literal text replac
 			if a.Mode != "string" && a.Mode != "regex" {
 				return "", errors.New("mode must be 'string' or 'regex'")
 			}
-			if err := checkAccess(checker, "edit_file", a.Path, permissions.AccessWrite); err != nil {
+			if err := checkAccess(checker, a.Path, permissions.AccessWrite); err != nil {
 				return "", err
 			}
 			data, err := os.ReadFile(a.Path)
@@ -443,7 +442,7 @@ func CreateDirectory(checker AccessChecker) ai.Tool {
 			if a.Path == "" {
 				return "", errors.New("path is required")
 			}
-			if err := checkAccess(checker, "create_directory", a.Path, permissions.AccessWrite); err != nil {
+			if err := checkAccess(checker, a.Path, permissions.AccessWrite); err != nil {
 				return "", err
 			}
 			if err := os.MkdirAll(a.Path, 0o755); err != nil {
@@ -489,10 +488,10 @@ func MoveFile(checker AccessChecker) ai.Tool {
 				return "", errors.New("destination is required")
 			}
 			// Check permissions twice as specified
-			if err := checkAccess(checker, "move_file", a.Source, permissions.AccessWrite); err != nil {
+			if err := checkAccess(checker, a.Source, permissions.AccessWrite); err != nil {
 				return "", err
 			}
-			if err := checkAccess(checker, "move_file", a.Destination, permissions.AccessWrite); err != nil {
+			if err := checkAccess(checker, a.Destination, permissions.AccessWrite); err != nil {
 				return "", err
 			}
 			if dir := filepath.Dir(a.Destination); dir != "." && dir != filepath.Dir(a.Destination) {
@@ -508,66 +507,36 @@ func MoveFile(checker AccessChecker) ai.Tool {
 	}
 }
 
-// ListAllowedDirectories returns a tool that lists directories the server is allowed
-// to access without asking. Returns Read/Write differences as well.
-// ListAllowedDirectories returns a tool that lists directories the server is allowed
-// to access without asking. Return Read/Write differences as well.
-func ListAllowedDirectories(checker AccessChecker, cfg interface{}) ai.Tool {
+// ListAllowedDirectories returns a tool that reports the filesystem
+// permission subset: the allow-all override and the per-directory
+// read/write rules, i.e. what the model may touch without being asked.
+func ListAllowedDirectories(checker AccessChecker) ai.Tool {
 	return ai.Tool{
-		Name:        "list_allowed_directories",
-		Description: "List directories the server is allowed to access without asking. Return Read/Write differences as well.",
+		Name: "list_allowed_directories",
+		Description: "List the filesystem permissions: whether an allow-all override is active, " +
+			"and which directories are granted read and/or write access without asking.",
 		Parameters: map[string]any{
-			"type": "object",
-			"properties": map[string]any{
-				"tool": map[string]any{
-					"type":        "string",
-					"description": "Tool name to check (optional, if not specified checks common filesystem tools)",
-				},
-			},
+			"type":       "object",
+			"properties": map[string]any{},
 		},
 		Handler: func(ctx context.Context, args json.RawMessage) (string, error) {
-			var a struct {
-				Tool string `json:"tool"`
+			if checker == nil {
+				return "(no permission checker configured: every directory is allowed)", nil
 			}
-			_ = json.Unmarshal(args, &a)
-
-			toolsToCheck := []string{}
-			if a.Tool != "" {
-				toolsToCheck = append(toolsToCheck, a.Tool)
-			} else {
-				toolsToCheck = []string{"read_file", "ls", "write_file", "glob", "edit_file", "create_directory", "move_file", "list_allowed_directories"}
-			}
+			fs := checker.FilesystemPermissions()
 
 			var b strings.Builder
-			b.WriteString("Allowed directories (no asking required):\n")
-			b.WriteString("(Note: Read/Write differences shown where applicable)\n\n")
-
-			// Try to extract from config if provided (GConfig from config package)
-			if cfg != nil {
-				// Use type assertion for *config.GConfig if in same module context? No, different packages.
-				// But let us try a common interface name
-				type toolPermGetter interface {
-					GetToolPermissions(string) interface{}
-				}
-				if gc, ok := cfg.(toolPermGetter); ok {
-					for _, t := range toolsToCheck {
-						perms := gc.GetToolPermissions(t)
-						// Try to handle both cases
-						switch v := perms.(type) {
-						case interface{ Len() int }:
-							if v.Len() > 0 {
-								b.WriteString(fmt.Sprintf("[%s] (non-empty)\n", t))
-							}
-						default:
-							b.WriteString(fmt.Sprintf("[%s] checked\n", t))
-						}
-					}
-					return b.String(), nil
-				}
+			b.WriteString("Filesystem permissions:\n")
+			if fs.AllowAll {
+				b.WriteString("allow-all override is on: every directory may be read and written without asking\n")
+				return b.String(), nil
 			}
-
-			for _, t := range toolsToCheck {
-				b.WriteString(fmt.Sprintf("[%s]\n", t))
+			if len(fs.Directories) == 0 {
+				b.WriteString("(no directory rules: every path must be approved first)\n")
+				return b.String(), nil
+			}
+			for _, rule := range fs.Directories {
+				fmt.Fprintf(&b, "%s (read: %s, write: %s)\n", rule.Directory, rule.Read, rule.Write)
 			}
 			return b.String(), nil
 		},

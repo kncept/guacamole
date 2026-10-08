@@ -3,12 +3,18 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/permissions"
 )
 
 func run(t *testing.T, handler ai.ToolHandler, args string) (string, error) {
@@ -249,11 +255,145 @@ func TestMoveFile(t *testing.T) {
 }
 
 func TestListAllowedDirectories(t *testing.T) {
-	out, err := run(t, ListAllowedDirectories(nil, nil).Handler, `{}`)
+	out, err := run(t, ListAllowedDirectories(nil).Handler, `{}`)
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if out == "" {
-		t.Errorf("expected non-empty output")
+	if !strings.Contains(out, "allowed") {
+		t.Errorf("expected an explanation for the nil checker, got:\n%s", out)
+	}
+}
+
+// fakeChecker is an AccessChecker with a fixed answer per category.
+type fakeChecker struct {
+	pathAllowed   bool
+	shellAllowed  bool
+	domainAllowed bool
+	fs            config.FilesystemPermissions
+}
+
+func (f *fakeChecker) IsAllowedPath(path string, access permissions.AccessKind) (bool, error) {
+	return f.pathAllowed, nil
+}
+
+func (f *fakeChecker) IsAllowedShellCommand(command string) (bool, error) {
+	return f.shellAllowed, nil
+}
+
+func (f *fakeChecker) IsAllowedDomain(domain string) (bool, error) {
+	return f.domainAllowed, nil
+}
+
+func (f *fakeChecker) FilesystemPermissions() config.FilesystemPermissions {
+	return f.fs
+}
+
+func TestListAllowedDirectoriesFromFilesystemPermissions(t *testing.T) {
+	checker := &fakeChecker{fs: config.FilesystemPermissions{
+		Directories: []config.DirectoryPermission{
+			{Directory: "/tmp", Read: config.PolicyAllow, Write: config.PolicyAllow},
+			{Directory: "/etc", Read: config.PolicyDeny, Write: config.PolicyDeny},
+		},
+	}}
+
+	out, err := run(t, ListAllowedDirectories(checker).Handler, `{}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out, "/tmp (read: allow, write: allow)") {
+		t.Errorf("output should carry /tmp's grants, got:\n%s", out)
+	}
+	if !strings.Contains(out, "/etc (read: deny, write: deny)") {
+		t.Errorf("output should carry /etc's grants, got:\n%s", out)
+	}
+}
+
+func TestListAllowedDirectoriesAllowAll(t *testing.T) {
+	checker := &fakeChecker{fs: config.FilesystemPermissions{AllowAll: true}}
+
+	out, err := run(t, ListAllowedDirectories(checker).Handler, `{}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out, "allow-all") {
+		t.Errorf("output should mention the allow-all override, got:\n%s", out)
+	}
+}
+
+func TestReadFileDenied(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(p, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := run(t, ReadFile(&fakeChecker{pathAllowed: false}).Handler, `{"path": "`+path(p)+`"}`)
+	if err == nil || !strings.Contains(err.Error(), "read access") {
+		t.Fatalf("expected a read denial, got %v", err)
+	}
+}
+
+func TestWriteFileDenied(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "out.txt")
+
+	_, err := run(t, WriteFile(&fakeChecker{pathAllowed: false}).Handler, `{"path": "`+path(target)+`", "content": "x"}`)
+	if err == nil || !strings.Contains(err.Error(), "write access") {
+		t.Fatalf("expected a write denial, got %v", err)
+	}
+	if _, statErr := os.Stat(target); !os.IsNotExist(statErr) {
+		t.Errorf("denied write must not create the file")
+	}
+}
+
+func TestShellDenied(t *testing.T) {
+	_, err := run(t, Shell(&fakeChecker{shellAllowed: false}, "sh").Handler, `{"command": "echo hi"}`)
+	if err == nil || !strings.Contains(err.Error(), "shell access denied") {
+		t.Fatalf("expected a shell denial, got %v", err)
+	}
+}
+
+func TestShellAllowed(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available")
+	}
+	out, err := run(t, Shell(&fakeChecker{shellAllowed: true}, "sh").Handler, `{"command": "echo shell ok"}`)
+	if err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+	if !strings.Contains(out, "shell ok") {
+		t.Errorf("out = %q, want the command output", out)
+	}
+}
+
+func TestHTTPFetchDenied(t *testing.T) {
+	_, err := run(t, HTTPFetch(&fakeChecker{domainAllowed: false}).Handler, `{"url": "http://example.com/"}`)
+	if err == nil || !strings.Contains(err.Error(), "web access to example.com denied") {
+		t.Fatalf("expected a web denial, got %v", err)
+	}
+}
+
+func TestHTTPFetchAllowed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "hello from the web")
+	}))
+	defer srv.Close()
+
+	out, err := run(t, HTTPFetch(&fakeChecker{domainAllowed: true}).Handler, `{"url": "`+srv.URL+`"}`)
+	if err != nil {
+		t.Fatalf("http_fetch: %v", err)
+	}
+	if !strings.Contains(out, "HTTP 200 OK") {
+		t.Errorf("out should carry the status line, got:\n%s", out)
+	}
+	if !strings.Contains(out, "hello from the web") {
+		t.Errorf("out should carry the body, got:\n%s", out)
+	}
+}
+
+func TestHTTPFetchRejectsNonHTTPSchemes(t *testing.T) {
+	if _, err := run(t, HTTPFetch(nil).Handler, `{"url": "ftp://example.com/"}`); err == nil {
+		t.Fatal("expected an error for an unsupported scheme")
+	}
+	if _, err := run(t, HTTPFetch(nil).Handler, `{}`); err == nil {
+		t.Fatal("expected an error for a missing url")
 	}
 }

@@ -138,15 +138,17 @@ type cliInput struct {
 	scanner *bufio.Scanner
 }
 
-// cliGranter asks the user for a directory permission on the terminal.
+// cliGranter asks the user for a permission decision on the terminal.
 type cliGranter struct {
 	input *cliInput
 }
 
 // AskForAccess prompts the user for a yes/no decision and returns a policy.
-// Anything other than y/yes is treated as deny.
-func (g *cliGranter) AskForAccess(toolName string, toolValue string) config.Policy {
-	fmt.Printf("Grant %s access to %s? [y/N]: ", toolName, toolValue)
+// category names the permission category being checked ("filesystem write",
+// "shell", "web"); value is the path, command or domain. Anything other than
+// y/yes is treated as deny.
+func (g *cliGranter) AskForAccess(category string, value string) config.Policy {
+	fmt.Printf("Grant %s access to %s? [y/N]: ", category, value)
 	if !g.input.scanner.Scan() {
 		return config.PolicyDeny
 	}

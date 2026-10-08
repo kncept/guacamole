@@ -53,8 +53,8 @@ type promptRunner struct {
 // directory and continues where it left off.
 // The sessions directory is taken from cfg (which applies its defaults).
 // checker enforces tool permissions and questionHandler answers the model's
-// user_question tool; either may be nil, which allows every write and omits
-// user_question respectively.
+// user_question tool; either may be nil, which allows every permission check
+// and omits user_question respectively.
 func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string, checker tools.AccessChecker, questionHandler tools.UserQuestionCallbackHandler) (PromptRunner, error) {
 	sessionsDir := cfg.SessionsDir
 

@@ -21,11 +21,11 @@ import (
 // sessionTab bundles a chat session with its tab item and the tab container
 // it lives in, so a session always knows where it is displayed.
 type sessionTab struct {
-	chat   *chat
-	tab    *container.TabItem
-	tabs   *container.DocTabs
-	guac   *Guac
-	banner *sessionBanner
+	chat         *chat
+	tab          *container.TabItem
+	tabs         *container.DocTabs
+	guac         *Guac
+	banner       *sessionBanner
 	inputBoxArea *fyne.Container
 }
 
@@ -154,27 +154,27 @@ func (st *sessionTab) selectedModel() config.ModelOption {
 	return config.ModelOption{}
 }
 
-// inputBox builds the session's input area: a multi-line entry with a submit
-// button. It is placed in the bottom border of the session's tab, so each
-// session has its own input independent of the others.
-// guiGranter implements permissions.PerissionGranter by showing buttons in
+// guiGranter implements permissions.PermissionGranter by showing buttons in
 // place of the session's input box. The caller is blocked until the user
 // picks a policy, then the input box is restored.
 type guiGranter struct {
 	tab *sessionTab
 }
 
-func (g *guiGranter) AskForAccess(toolName string, toolValue string) config.Policy {
+// AskForAccess shows the category and value being checked and returns the
+// user's policy. category names the permission category ("filesystem write",
+// "shell", "web"); value is the path, command or domain.
+func (g *guiGranter) AskForAccess(category string, value string) config.Policy {
 	if g.tab == nil {
 		return config.PolicyDeny
 	}
 	answer := make(chan config.Policy, 1)
-	fmt.Printf("[Permission] %s wants %s\n", toolName, toolValue)
+	fmt.Printf("[Permission] %s access to %s\n", category, value)
 
 	original := g.tab.inputBoxArea
 	fyne.Do(func() {
 		// Show what is being asked for, not just the buttons to answer it.
-		prompt := widget.NewLabel(fmt.Sprintf("%s is asking for access to %s", toolName, toolValue))
+		prompt := widget.NewLabel(fmt.Sprintf("Allow %s access to %s?", category, value))
 		prompt.Importance = widget.HighImportance
 		// A late second click must not block the UI thread, so extra
 		// answers are dropped once the first one was given.
@@ -259,6 +259,9 @@ func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []s
 	return a, nil
 }
 
+// inputBox builds the session's input area: a multi-line entry with a submit
+// button. It is placed in the bottom border of the session's tab, so each
+// session has its own input independent of the others.
 func (st *sessionTab) inputBox() *fyne.Container {
 	input := st.chat.input
 	// Enable multi-line mode so that Enter inserts a newline instead of submitting.
