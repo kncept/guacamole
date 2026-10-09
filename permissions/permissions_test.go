@@ -1,6 +1,7 @@
 package permissions
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -359,5 +360,47 @@ func TestDomainCovers(t *testing.T) {
 		if got := domainCovers(c.rule, c.domain); got != c.want {
 			t.Errorf("domainCovers(%q, %q) = %v, want %v", c.rule, c.domain, got, c.want)
 		}
+	}
+}
+
+func TestFilesystemRelativePathConvertedToAbsolute(t *testing.T) {
+	// This test verifies that relative paths (like ".") are resolved to absolute paths
+	// before checking permissions and recording decisions.
+	granter := &fakeGranter{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, granter, nil)
+
+	// Get the current working directory as absolute path
+	absCWD, err := filepath.Abs(".")
+	if err != nil {
+		t.Fatalf("filepath.Abs: %v", err)
+	}
+
+	// Use "." as the path - it should be converted to absolute
+	allowed, err := m.IsAllowedPath(".", AccessRead)
+	if err != nil {
+		t.Fatalf("IsAllowedPath: %v", err)
+	}
+	if !allowed {
+		t.Fatal("read allowed = false, want true (granter allowed)")
+	}
+
+	// The recorded directory should be the absolute path, not "."
+	wantDirs := []config.DirectoryPermission{
+		{Directory: absCWD, Read: config.PolicyAllow, Write: config.PolicyAsk},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v (should use absolute path, not '.')", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+
+	// Now verify that using the absolute path directly also works (no new prompt)
+	allowed, err = m.IsAllowedPath(absCWD, AccessRead)
+	if err != nil {
+		t.Fatalf("IsAllowedPath(absPath): %v", err)
+	}
+	if !allowed {
+		t.Error("second read with absolute path allowed = false, want true")
+	}
+	if len(granter.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1 (second call should use recorded rule)", len(granter.asks))
 	}
 }

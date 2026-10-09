@@ -50,6 +50,13 @@ const (
 // directly; ask rules (and no matching rule at all) fall through to the
 // PermissionGranter, and its answer is recorded and saved.
 func (this *PermissionsManager) IsAllowedPath(path string, access AccessKind) (bool, error) {
+	// Always resolve to absolute path to handle "." and other relative paths consistently
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	path = absPath
+
 	filesystem := this.config.Permissions.Filesystem
 	if filesystem.AllowAll {
 		return true, nil
