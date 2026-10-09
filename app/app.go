@@ -45,7 +45,7 @@ func New() *Guac {
 
 	g := &Guac{a: a, w: w, count: 0}
 	g.config, _ = config.Load()
-	g.models, _ = config.AllModelOptions()
+	g.reloadModels()
 	g.roles = roles.AllRoles()
 	g.tabs = container.NewDocTabs()
 	g.tabs.CloseIntercept = g.onTabClosed
@@ -78,6 +78,15 @@ func New() *Guac {
 // Run shows the window and starts the event loop.
 func (g *Guac) Run() {
 	g.w.ShowAndRun()
+}
+
+// reloadModels rebuilds the available model list from the configured providers
+// in the guac config. The "Provider / Model" dropdown is sourced solely from
+// these configured providers.
+func (g *Guac) reloadModels() {
+	if g.config != nil {
+		g.models = config.AllModelOptionsFromProviders(g.config)
+	}
 }
 
 func (g *Guac) onModelChanged(st *sessionTab, label string) {

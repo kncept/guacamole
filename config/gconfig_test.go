@@ -232,3 +232,75 @@ func TestInitDefaultsShellPolicy(t *testing.T) {
 		t.Errorf("Shell policy = %q, want the %q default", c.Permissions.Shell.Policy, PolicyAsk)
 	}
 }
+
+// TestNormalizePreconfiguredProvider documents that a preconfigured provider
+// (OpenAI / nVidia / OpenCode) is filled in with its fixed name and base URL,
+// so only the API key needs to be supplied.
+func TestNormalizePreconfiguredProvider(t *testing.T) {
+	for _, tc := range []struct {
+		typ     ModelProviderType
+		name    string
+		baseURL string
+	}{
+		{ModelProviderTypeOpenAI, "OpenAI", "https://api.openai.com/v1"},
+		{ModelProviderTypeNvidia, "nVidia", "https://integrate.api.nvidia.com/v1"},
+		{ModelProviderTypeOpenCode, "OpenCode", "https://opencode.ai/v1"},
+	} {
+		got := NormalizeModelProvider(ModelProvider{Type: tc.typ, APIKey: "k"})
+		if got.Name != tc.name {
+			t.Errorf("%s: Name = %q, want %q", tc.typ, got.Name, tc.name)
+		}
+		if got.BaseURL != tc.baseURL {
+			t.Errorf("%s: BaseURL = %q, want %q", tc.typ, got.BaseURL, tc.baseURL)
+		}
+		if got.APIKey != "k" {
+			t.Errorf("%s: APIKey = %q, want %q", tc.typ, got.APIKey, "k")
+		}
+	}
+}
+
+// TestNormalizeOpenAICompatibleUntouched documents that a custom OpenAI
+// Compatible provider keeps the user-supplied name, base URL and key and is
+// not given any defaults.
+func TestNormalizeOpenAICompatibleUntouched(t *testing.T) {
+	got := NormalizeModelProvider(ModelProvider{
+		Type:    ModelProviderTypeOpenAICompatible,
+		Name:    "My Local",
+		BaseURL: "http://localhost:8080/v1",
+		APIKey:  "abc",
+	})
+	want := ModelProvider{
+		Type:    ModelProviderTypeOpenAICompatible,
+		Name:    "My Local",
+		BaseURL: "http://localhost:8080/v1",
+		APIKey:  "abc",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Normalize = %+v, want %+v", got, want)
+	}
+}
+
+// TestAddRemoveModelProvider checks that providers can be added (normalized)
+// and removed by name.
+func TestAddRemoveModelProvider(t *testing.T) {
+	c := &GConfig{}
+	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeNvidia, APIKey: "nv"})
+	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeOpenAICompatible, Name: "Mine", BaseURL: "http://x/v1"})
+
+	if len(c.ModelProviders) != 2 {
+		t.Fatalf("len(ModelProviders) = %d, want 2", len(c.ModelProviders))
+	}
+	if c.ModelProviders[0].Name != "nVidia" || c.ModelProviders[0].BaseURL != "https://integrate.api.nvidia.com/v1" {
+		t.Errorf("normalized nVidia provider = %+v", c.ModelProviders[0])
+	}
+
+	if !c.RemoveModelProvider("nVidia") {
+		t.Error("RemoveModelProvider(nVidia) = false, want true")
+	}
+	if len(c.ModelProviders) != 1 || c.ModelProviders[0].Name != "Mine" {
+		t.Errorf("after removal ModelProviders = %+v, want just Mine", c.ModelProviders)
+	}
+	if c.RemoveModelProvider("nope") {
+		t.Error("RemoveModelProvider(nope) = true, want false")
+	}
+}

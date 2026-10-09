@@ -31,7 +31,7 @@ type restfulAI struct {
 // scheme", far from the real cause.
 func NewRestfulAI(conf *config.ApiModelInterfaceDetails) (RestfulAI, error) {
 	if conf.BaseUrl == "" {
-		return nil, fmt.Errorf("restfulai: no base URL for model %q; set options.baseURL on the provider in the opencode config", conf.ModelName)
+		return nil, fmt.Errorf("restfulai: no base URL for model %q; set base URL in provider configuration", conf.ModelName)
 	}
 
 	client := openai.NewClient(
@@ -131,6 +131,36 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 			final.Usage.InputTokens, final.Usage.OutputTokens)
 	}
 	return resp, nil
+}
+
+// ListModels fetches available model IDs from an OpenAI-compatible endpoint
+// at baseURL using apiKey for authentication (falls back to
+// $OPENAI_API_KEY when empty).
+func ListModels(baseURL, apiKey string) ([]string, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("restfulai: no base URL to list models")
+	}
+
+	opts := []openaiOption.RequestOption{
+		openaiOption.WithBaseURL(baseURL),
+	}
+	if apiKey != "" {
+		opts = append(opts, openaiOption.WithAPIKey(apiKey))
+	}
+
+	client := openai.NewClient(opts...)
+	var models []string
+	pager := client.Models.ListAutoPaging(context.Background())
+	for pager.Next() {
+		m := pager.Current()
+		if m.ID != "" {
+			models = append(models, m.ID)
+		}
+	}
+	if err := pager.Err(); err != nil {
+		return nil, fmt.Errorf("restfulai: list models from %s: %w", baseURL, err)
+	}
+	return models, nil
 }
 
 // params translates a normalized ai.Request into openai-go request params.

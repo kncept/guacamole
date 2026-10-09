@@ -65,14 +65,82 @@ type DomainPermission struct {
 	Policy Policy `json:"policy"`
 }
 
+// ModelProviderType represents the type of model provider.
+type ModelProviderType string
+
+const (
+	// ModelProviderTypeOpenAICompatible is a user-defined OpenAI-compatible
+	// endpoint: the name and base URL are entered, and the API key is optional.
+	ModelProviderTypeOpenAICompatible ModelProviderType = "OpenAI Compatible"
+	// ModelProviderTypeOpenAI is the preconfigured OpenAI provider.
+	ModelProviderTypeOpenAI ModelProviderType = "OpenAI"
+	// ModelProviderTypeNvidia is the preconfigured nVidia (NIM) provider.
+	ModelProviderTypeNvidia ModelProviderType = "nVidia"
+	// ModelProviderTypeOpenCode is the preconfigured OpenCode provider.
+	ModelProviderTypeOpenCode ModelProviderType = "OpenCode"
+)
+
+// providerDefaults holds the fixed name and base URL for the providers that
+// ship preconfigured: for these, only the API key is user-supplied.
+var providerDefaults = map[ModelProviderType]struct {
+	Name    string
+	BaseURL string
+}{
+	ModelProviderTypeOpenAI:   {Name: "OpenAI", BaseURL: "https://api.openai.com/v1"},
+	ModelProviderTypeNvidia:   {Name: "nVidia", BaseURL: "https://integrate.api.nvidia.com/v1"},
+	ModelProviderTypeOpenCode: {Name: "OpenCode", BaseURL: "https://opencode.ai/v1"},
+}
+
+// IsPreconfigured reports whether t is a provider that ships with a fixed
+// name and base URL, so the user only supplies the API key.
+func (t ModelProviderType) IsPreconfigured() bool {
+	_, ok := providerDefaults[t]
+	return ok
+}
+
+// PreconfiguredName returns the default display name for a preconfigured
+// provider, or an empty string when t is not preconfigured.
+func (t ModelProviderType) PreconfiguredName() string {
+	if d, ok := providerDefaults[t]; ok {
+		return d.Name
+	}
+	return ""
+}
+
+// PreconfiguredBaseURL returns the fixed base URL for a preconfigured
+// provider, or an empty string when t is not preconfigured.
+func (t ModelProviderType) PreconfiguredBaseURL() string {
+	if d, ok := providerDefaults[t]; ok {
+		return d.BaseURL
+	}
+	return ""
+}
+
+// ModelProvider represents a configured model provider.
+type ModelProvider struct {
+	// Name is the user-friendly name of the provider (e.g., "OpenAI",
+	// "nVidia", "OpenCode", or a custom name for OpenAI Compatible).
+	Name string `json:"name"`
+	// Type is the type of provider.
+	Type ModelProviderType `json:"type"`
+	// BaseURL is the base URL for the provider's API.
+	BaseURL string `json:"baseUrl,omitempty"`
+	// APIKey is the API key for the provider (optional for OpenAI Compatible).
+	APIKey string `json:"apiKey,omitempty"`
+	// Models is the list of available model names.
+	Models []string `json:"models,omitempty"`
+}
+
 // GConfig is the basis of the ~/.guac/config.json file: the directories
-// guacamole uses, and the category-based permission rules.
+// guacamole uses, the category-based permission rules, and model providers.
 type GConfig struct {
 	// SessionsDir is where saved sessions live. Left empty it defaults to
 	// ~/.guac/session via InitDefaults.
 	SessionsDir string `json:"sessionsDir"`
 	// Permissions holds the permission rules of each category.
 	Permissions Permissions `json:"permissions"`
+	// ModelProviders holds the configured model providers.
+	ModelProviders []ModelProvider `json:"modelProviders"`
 }
 
 // Load reads GConfig from GuacDir()/config.json — an empty config when the
@@ -110,6 +178,64 @@ func (this *GConfig) InitDefaults() {
 		// An unset shell policy means "ask before every shell command".
 		this.Permissions.Shell.Policy = PolicyAsk
 	}
+	if this.ModelProviders == nil {
+		this.ModelProviders = []ModelProvider{}
+	}
+}
+
+// AddModelProvider adds a new model provider to the config, filling in the
+// preconfigured name and base URL for providers that ship with fixed
+// connection details.
+func (this *GConfig) AddModelProvider(provider ModelProvider) {
+	if this.ModelProviders == nil {
+		this.ModelProviders = []ModelProvider{}
+	}
+	provider = NormalizeModelProvider(provider)
+	this.ModelProviders = append(this.ModelProviders, provider)
+}
+
+// RemoveModelProvider removes the first provider with the given name. It
+// reports whether a provider was removed.
+func (this *GConfig) RemoveModelProvider(name string) bool {
+	for i, p := range this.ModelProviders {
+		if p.Name == name {
+			this.ModelProviders = append(this.ModelProviders[:i], this.ModelProviders[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateModelProvider replaces the provider at index i with the new provider.
+func (this *GConfig) UpdateModelProvider(i int, provider ModelProvider) {
+	if this.ModelProviders == nil || i < 0 || i >= len(this.ModelProviders) {
+		return
+	}
+	provider = NormalizeModelProvider(provider)
+	this.ModelProviders[i] = provider
+}
+
+// GetModelProvider returns the provider at index i (or zero value if out of range).
+func (this *GConfig) GetModelProvider(i int) (ModelProvider, bool) {
+	if this.ModelProviders == nil || i < 0 || i >= len(this.ModelProviders) {
+		return ModelProvider{}, false
+	}
+	return this.ModelProviders[i], true
+}
+
+// NormalizeModelProvider fills in the preconfigured name and base URL for a
+// provider that ships with fixed connection details, leaving user-supplied
+// values untouched.
+func NormalizeModelProvider(provider ModelProvider) ModelProvider {
+	if provider.Type.IsPreconfigured() {
+		if provider.Name == "" {
+			provider.Name = provider.Type.PreconfiguredName()
+		}
+		if provider.BaseURL == "" {
+			provider.BaseURL = provider.Type.PreconfiguredBaseURL()
+		}
+	}
+	return provider
 }
 
 // Save writes the config back to GuacDir()/config.json, creating the
