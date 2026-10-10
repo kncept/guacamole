@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
@@ -122,6 +123,11 @@ func (p *preferencesScreen) providersScreen() fyne.CanvasObject {
 		rows = append(rows, container.NewHBox(
 			widget.NewButton("Edit", func() { p.showEditProvider(idx) }),
 			widget.NewButton("Models", func() { p.showProviderModels(idx) }),
+			func() *widget.Button {
+				btn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() { p.confirmDeleteProvider(idx) })
+				btn.Importance = widget.LowImportance
+				return btn
+			}(),
 		))
 		rows = append(rows, widget.NewSeparator())
 	}
@@ -202,6 +208,39 @@ func (p *preferencesScreen) deleteSession(dir, id string) {
 		dialog.ShowError(err, p.guac.w)
 		return
 	}
+	p.showSection(p.section)
+}
+
+// confirmDeleteProvider shows a confirmation dialog before deleting a provider.
+func (p *preferencesScreen) confirmDeleteProvider(idx int) {
+	prov, ok := p.guac.config.GetModelProvider(idx)
+	if !ok {
+		return
+	}
+	dialog.ShowConfirm(
+		"Delete Provider",
+		fmt.Sprintf("Are you sure you want to delete the provider '%s'?", prov.Name),
+		func(confirmed bool) {
+			if confirmed {
+				p.deleteProvider(idx)
+			}
+		},
+		p.guac.w,
+	)
+}
+
+// deleteProvider removes the provider at the given index and refreshes the screen.
+func (p *preferencesScreen) deleteProvider(idx int) {
+	if p.guac.config == nil {
+		return
+	}
+	prov, ok := p.guac.config.GetModelProvider(idx)
+	if !ok {
+		return
+	}
+	p.guac.config.RemoveModelProvider(prov.Name)
+	_ = p.guac.config.Save()
+	p.guac.reloadModels()
 	p.showSection(p.section)
 }
 
