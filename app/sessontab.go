@@ -119,8 +119,9 @@ func (st *sessionTab) session() *ai.Session {
 // as a line like "→ ls /tmp": tool activity must be visible, otherwise a
 // tool round looks like a frozen app. The line is added when the call
 // starts; if the call fails, the error is shown on the same line. Handlers
-// run in the session's goroutine, so log updates are marshalled onto the UI
-// thread.
+// run in the session's goroutine (never the UI thread), so log updates are
+// marshalled onto the UI thread with DoAndWait: the label must be back in
+// hand before the call runs, and fyne.Do alone would not wait.
 func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
 	for i := range ts {
 		name := ts[i].Name
@@ -128,10 +129,10 @@ func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
 		ts[i].Handler = func(ctx context.Context, args json.RawMessage) (string, error) {
 			summary := tools.Summarize(name, args)
 			var label *widget.Label
-			fyne.Do(func() { label = st.chat.addToolCall(summary) })
+			fyne.DoAndWait(func() { label = st.chat.addToolCall(summary) })
 			out, err := handler(ctx, args)
 			if err != nil {
-				fyne.Do(func() { st.chat.markToolError(label, summary, err) })
+				fyne.DoAndWait(func() { st.chat.markToolError(label, summary, err) })
 			}
 			return out, err
 		}
@@ -181,7 +182,11 @@ func (st *sessionTab) selectedModel() config.ModelOption {
 
 // guiGranter implements permissions.PermissionGranter by showing buttons in
 // place of the session's input box. The caller is blocked until the user
-// picks a policy, then the input box is restored.
+// picks a policy, then the input box is restored. AskForAccess runs in the
+// session's goroutine (never the UI thread), so the UI updates are
+// marshalled with DoAndWait: the prompt must be shown before the wait for
+// the answer, and the restore must be done before the next tool call reads
+// inputBoxArea.
 type guiGranter struct {
 	tab *sessionTab
 }
@@ -197,7 +202,7 @@ func (g *guiGranter) AskForAccess(category string, value string) config.Policy {
 	fmt.Printf("[Permission] %s access to %s\n", category, value)
 
 	original := g.tab.inputBoxArea
-	fyne.Do(func() {
+	fyne.DoAndWait(func() {
 		// Show what is being asked for, not just the buttons to answer it.
 		prompt := widget.NewLabel(fmt.Sprintf("Allow %s access to %s?", category, value))
 		prompt.Importance = widget.HighImportance
@@ -218,7 +223,7 @@ func (g *guiGranter) AskForAccess(category string, value string) config.Policy {
 		g.tab.updateInput()
 	})
 	p := <-answer
-	fyne.Do(func() {
+	fyne.DoAndWait(func() {
 		g.tab.inputBoxArea = original
 		g.tab.updateInput()
 	})
@@ -233,7 +238,9 @@ func (st *sessionTab) updateInput() {
 // guiQuestionHandler implements tools.UserQuestionCallbackHandler by showing
 // the question's suggested responses as buttons in place of the session's
 // input box. The caller is blocked until the user answers, then the input box
-// is restored.
+// is restored. UserQuestionCallback runs in the session's goroutine (never
+// the UI thread), so the UI updates are marshalled with DoAndWait, for the
+// same reasons as guiGranter.AskForAccess.
 type guiQuestionHandler struct {
 	tab *sessionTab
 }
@@ -246,7 +253,7 @@ func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []s
 	fmt.Printf("[Question] %s\n", question)
 
 	original := g.tab.inputBoxArea
-	fyne.Do(func() {
+	fyne.DoAndWait(func() {
 		row := container.NewHBox(widget.NewLabel(question))
 		for _, response := range responses {
 			// Late clicks after an answer was already given must not
@@ -277,7 +284,7 @@ func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []s
 		g.tab.updateInput()
 	})
 	a := <-answer
-	fyne.Do(func() {
+	fyne.DoAndWait(func() {
 		g.tab.inputBoxArea = original
 		g.tab.updateInput()
 	})

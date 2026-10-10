@@ -32,9 +32,9 @@ type preferencesScreen struct {
 	section int
 
 	// For permissions screen: track the rule editors to enable save/reset
-	fsDirEntries    []*widget.Entry
-	fsReadSelects   []*widget.Select
-	fsWriteSelects  []*widget.Select
+	fsDirEntries     []*widget.Entry
+	fsReadSelects    []*widget.Select
+	fsWriteSelects   []*widget.Select
 	webDomainEntries []*widget.Entry
 	webPolicySelects []*widget.Select
 }
@@ -368,20 +368,25 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 
 	var checks []*widget.Check
 
+	// fetchAndPopulate runs on a background goroutine (the models are
+	// fetched over the network), so its UI updates must be marshalled onto
+	// the UI thread.
 	fetchAndPopulate := func() {
 		models, err := restfulai.ListModels(prov.BaseURL, prov.APIKey.String())
 		if err != nil {
-			dialog.ShowError(err, p.guac.w)
+			fyne.Do(func() { dialog.ShowError(err, p.guac.w) })
 			return
 		}
 		sort.Strings(models)
-		populate(models, checked)
-		checks = []*widget.Check{}
-		for _, obj := range rows.Objects {
-			if c, ok := obj.(*widget.Check); ok {
-				checks = append(checks, c)
+		fyne.Do(func() {
+			populate(models, checked)
+			checks = []*widget.Check{}
+			for _, obj := range rows.Objects {
+				if c, ok := obj.(*widget.Check); ok {
+					checks = append(checks, c)
+				}
 			}
-		}
+		})
 	}
 
 	save := func() {
