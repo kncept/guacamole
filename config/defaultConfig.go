@@ -42,7 +42,7 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 		if len(p.Models) > 0 {
 			conf := &ApiModelInterfaceDetails{
 				BaseUrl:   p.BaseURL,
-				ApiKey:    p.APIKey,
+				ApiKey:    p.APIKey.String(),
 				ModelName: p.Models[0],
 			}
 			fmt.Printf("config: using model %s via %s (api key: %s)\n",
@@ -56,7 +56,7 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 
 	conf := &ApiModelInterfaceDetails{
 		BaseUrl: fallback.BaseURL,
-		ApiKey:  fallback.APIKey,
+		ApiKey:  fallback.APIKey.String(),
 	}
 	fmt.Printf("config: using provider %s via %s (api key: %s)\n",
 		fallback.Name, conf.BaseUrl, apiKeyStatus(conf.ApiKey))

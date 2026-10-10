@@ -5,10 +5,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/kncept/guacamole/utils/encryption"
 )
 
 // configFileName is GConfig's file name, stored in GuacDir().
 const configFileName = "config.json"
+
+// apiKeyObfuscationKey is the XOR key API keys are stored with in
+// config.json. It is not a secret: the obfuscation only keeps keys from
+// being readable straight out of the file, not from someone who also has
+// this source.
+const apiKeyObfuscationKey = "guacamole-api-key-obfuscation"
 
 // Policy is what guacamole does with a tool call that matches a permission
 // rule.
@@ -125,8 +133,10 @@ type ModelProvider struct {
 	Type ModelProviderType `json:"type"`
 	// BaseURL is the base URL for the provider's API.
 	BaseURL string `json:"baseUrl,omitempty"`
-	// APIKey is the API key for the provider (optional for OpenAI Compatible).
-	APIKey string `json:"apiKey,omitempty"`
+	// APIKey is the API key for the provider (optional for OpenAI
+	// Compatible), stored obfuscated so it is not readable straight out of
+	// the config file.
+	APIKey encryption.ObfuscatedValue `json:"apiKey"`
 	// Models is the list of available model names.
 	Models []string `json:"models,omitempty"`
 }
@@ -141,6 +151,12 @@ type GConfig struct {
 	Permissions Permissions `json:"permissions"`
 	// ModelProviders holds the configured model providers.
 	ModelProviders []ModelProvider `json:"modelProviders"`
+}
+
+// NewAPIKey returns an API key ready to store in a ModelProvider: XOR-
+// obfuscated so it is not readable straight out of the config file.
+func NewAPIKey(key string) encryption.ObfuscatedValue {
+	return encryption.NewObfuscatedValue(key, apiKeyObfuscationKey)
 }
 
 // Load reads GConfig from GuacDir()/config.json — an empty config when the
@@ -180,6 +196,12 @@ func (this *GConfig) InitDefaults() {
 	}
 	if this.ModelProviders == nil {
 		this.ModelProviders = []ModelProvider{}
+	}
+	// Upgrade API keys to obfuscated form. This re-wraps legacy values that
+	// still sit in the file as plain text and is a no-op for values already
+	// stored obfuscated, so it is safe to run on every load.
+	for i := range this.ModelProviders {
+		this.ModelProviders[i].APIKey = this.ModelProviders[i].APIKey.Reobfuscated(apiKeyObfuscationKey)
 	}
 }
 

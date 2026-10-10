@@ -16,7 +16,7 @@ import (
 
 // preferenceSections are the entries of the Preferences navigation list, in
 // display order. Each one names a screen built by screenFor.
-var preferenceSections = []string{"Providers", "Roles", "Sessions"}
+var preferenceSections = []string{"Providers", "Roles", "Sessions", "Permissions"}
 
 // preferencesScreen is the in-window Preferences screen: a Back button on
 // top, a list of sections down the left side (a vertical tab list) and the
@@ -30,6 +30,13 @@ type preferencesScreen struct {
 	nav     *widget.List
 	body    *fyne.Container
 	section int
+
+	// For permissions screen: track the rule editors to enable save/reset
+	fsDirEntries    []*widget.Entry
+	fsReadSelects   []*widget.Select
+	fsWriteSelects  []*widget.Select
+	webDomainEntries []*widget.Entry
+	webPolicySelects []*widget.Select
 }
 
 // showPreferences replaces the window content with the Preferences screen.
@@ -82,6 +89,8 @@ func (p *preferencesScreen) screenFor(name string) fyne.CanvasObject {
 		return p.rolesScreen()
 	case "Sessions":
 		return p.sessionsScreen()
+	case "Permissions":
+		return p.permissionsScreen()
 	}
 	return widget.NewLabel("Unknown preferences section: " + name)
 }
@@ -272,7 +281,7 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 		if prov, ok := p.guac.config.GetModelProvider(idx); ok {
 			typeSelect.SetSelected(string(prov.Type))
 			buildFields(string(prov.Type))
-			apiKeyEntry.SetText(prov.APIKey)
+			apiKeyEntry.SetText(prov.APIKey.String())
 			if prov.Type == config.ModelProviderTypeOpenAICompatible {
 				nameEntry.SetText(prov.Name)
 				baseURLEntry.SetText(prov.BaseURL)
@@ -290,11 +299,11 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 		if providerType == config.ModelProviderTypeOpenAICompatible {
 			provider.Name = nameEntry.Text
 			provider.BaseURL = baseURLEntry.Text
-			provider.APIKey = apiKeyEntry.Text
+			provider.APIKey = config.NewAPIKey(apiKeyEntry.Text)
 		} else {
 			provider.Name = providerType.PreconfiguredName()
 			provider.BaseURL = providerType.PreconfiguredBaseURL()
-			provider.APIKey = apiKeyEntry.Text
+			provider.APIKey = config.NewAPIKey(apiKeyEntry.Text)
 		}
 		if p.guac.config != nil {
 			if idx >= 0 {
@@ -360,7 +369,7 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 	var checks []*widget.Check
 
 	fetchAndPopulate := func() {
-		models, err := restfulai.ListModels(prov.BaseURL, prov.APIKey)
+		models, err := restfulai.ListModels(prov.BaseURL, prov.APIKey.String())
 		if err != nil {
 			dialog.ShowError(err, p.guac.w)
 			return
@@ -413,4 +422,176 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 
 	p.guac.w.SetContent(container.NewBorder(header, nil, nil, nil,
 		container.NewVScroll(rows)))
+}
+
+func policyOptions() []string {
+	return []string{string(config.PolicyAllow), string(config.PolicyAsk), string(config.PolicyDeny)}
+}
+
+func (p *preferencesScreen) permissionsScreen() fyne.CanvasObject {
+	cfg := p.guac.config
+	if cfg == nil {
+		return paddedLabel("No config available")
+	}
+
+	// Initialize editor tracking slices
+	p.fsDirEntries = nil
+	p.fsReadSelects = nil
+	p.fsWriteSelects = nil
+	p.webDomainEntries = nil
+	p.webPolicySelects = nil
+
+	// Build the content rows
+	rows := container.NewVBox()
+
+	// Filesystem section
+	fsAllowAll := widget.NewCheck("Allow all filesystem access", func(b bool) {
+		cfg.Permissions.Filesystem.AllowAll = b
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	fsAllowAll.Checked = cfg.Permissions.Filesystem.AllowAll
+
+	rows.Add(widget.NewLabelWithStyle("Filesystem", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	rows.Add(fsAllowAll)
+	rows.Add(widget.NewLabel("Directory → Read / Write"))
+
+	// Filesystem directory rules
+	for i := range cfg.Permissions.Filesystem.Directories {
+		p.addFilesystemRuleRow(rows, cfg, i)
+	}
+
+	addFs := widget.NewButton("Add Directory", func() {
+		cfg.Permissions.Filesystem.Directories = append(cfg.Permissions.Filesystem.Directories, config.DirectoryPermission{})
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	rows.Add(addFs)
+	rows.Add(widget.NewSeparator())
+
+	// Shell section
+	shellPolicy := widget.NewSelect([]string{string(config.PolicyAllow), string(config.PolicyAsk), string(config.PolicyDeny)}, func(s string) {
+		cfg.Permissions.Shell.Policy = config.Policy(s)
+		_ = cfg.Save()
+	})
+	shellPolicy.SetSelected(string(cfg.Permissions.Shell.Policy))
+
+	rows.Add(widget.NewLabelWithStyle("Shell", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	rows.Add(shellPolicy)
+	rows.Add(widget.NewSeparator())
+
+	// Web section
+	webAllowAll := widget.NewCheck("Allow all web access", func(b bool) {
+		cfg.Permissions.Web.AllowAll = b
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	webAllowAll.Checked = cfg.Permissions.Web.AllowAll
+
+	rows.Add(widget.NewLabelWithStyle("Web", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	rows.Add(webAllowAll)
+	rows.Add(widget.NewLabel("Domain → Policy"))
+
+	// Web domain rules
+	for i := range cfg.Permissions.Web.Domains {
+		p.addWebRuleRow(rows, cfg, i)
+	}
+
+	addWeb := widget.NewButton("Add Domain", func() {
+		cfg.Permissions.Web.Domains = append(cfg.Permissions.Web.Domains, config.DomainPermission{})
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	rows.Add(addWeb)
+	rows.Add(widget.NewSeparator())
+
+	// Reset all permissions
+	resetAll := widget.NewButton("Reset all permissions to defaults", func() {
+		cfg.Permissions = config.Permissions{}
+		cfg.InitDefaults()
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	rows.Add(resetAll)
+
+	// Wrap in a scroll container
+	content := container.NewVScroll(rows)
+
+	// Create header with Reset and Save buttons for the permissions section
+	header := container.NewBorder(nil, nil,
+		widget.NewButtonWithIcon("Reset", theme.ContentClearIcon(), func() {
+			cfg.Permissions = config.Permissions{}
+			cfg.InitDefaults()
+			_ = cfg.Save()
+			p.rebuildPermissionsScreen()
+		}),
+		widget.NewButtonWithIcon("Save", theme.DocumentSaveIcon(), func() {
+			_ = cfg.Save()
+			dialog.ShowInformation("Saved", "Permissions saved successfully", p.guac.w)
+		}),
+		widget.NewLabelWithStyle("Permissions", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	)
+
+	return container.NewBorder(header, nil, nil, nil, content)
+}
+
+// rebuildPermissionsScreen refreshes the permissions section by re-showing it
+func (p *preferencesScreen) rebuildPermissionsScreen() {
+	p.showSection(p.section)
+}
+
+// addFilesystemRuleRow adds a row for editing a filesystem directory rule
+func (p *preferencesScreen) addFilesystemRuleRow(rows *fyne.Container, cfg *config.GConfig, index int) {
+	dir := &cfg.Permissions.Filesystem.Directories[index]
+	dirEntry := widget.NewEntry()
+	dirEntry.SetText(dir.Directory)
+	readSel := widget.NewSelect(policyOptions(), func(s string) {
+		dir.Read = config.Policy(s)
+		_ = cfg.Save()
+	})
+	readSel.SetSelected(string(dir.Read))
+	writeSel := widget.NewSelect(policyOptions(), func(s string) {
+		dir.Write = config.Policy(s)
+		_ = cfg.Save()
+	})
+	writeSel.SetSelected(string(dir.Write))
+
+	// Track for potential future use
+	p.fsDirEntries = append(p.fsDirEntries, dirEntry)
+	p.fsReadSelects = append(p.fsReadSelects, readSel)
+	p.fsWriteSelects = append(p.fsWriteSelects, writeSel)
+
+	removeBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
+		cfg.Permissions.Filesystem.Directories = append(cfg.Permissions.Filesystem.Directories[:index], cfg.Permissions.Filesystem.Directories[index+1:]...)
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	removeBtn.Importance = widget.LowImportance
+
+	rows.Add(container.NewHBox(dirEntry, readSel, writeSel, removeBtn))
+}
+
+// addWebRuleRow adds a row for editing a web domain rule
+func (p *preferencesScreen) addWebRuleRow(rows *fyne.Container, cfg *config.GConfig, index int) {
+	d := &cfg.Permissions.Web.Domains[index]
+	dEntry := widget.NewEntry()
+	dEntry.SetText(d.Domain)
+	polSel := widget.NewSelect(policyOptions(), func(s string) {
+		d.Policy = config.Policy(s)
+		_ = cfg.Save()
+	})
+	polSel.SetSelected(string(d.Policy))
+
+	// Track for potential future use
+	p.webDomainEntries = append(p.webDomainEntries, dEntry)
+	p.webPolicySelects = append(p.webPolicySelects, polSel)
+
+	removeBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
+		cfg.Permissions.Web.Domains = append(cfg.Permissions.Web.Domains[:index], cfg.Permissions.Web.Domains[index+1:]...)
+		_ = cfg.Save()
+		p.rebuildPermissionsScreen()
+	})
+	removeBtn.Importance = widget.LowImportance
+
+	rows.Add(container.NewHBox(dEntry, polSel, removeBtn))
 }

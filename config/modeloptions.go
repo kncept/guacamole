@@ -15,9 +15,8 @@ type ModelOption struct {
 	ProviderType ModelProviderType
 }
 
-// Label returns a human-readable identifier for the option. A model that
-// belongs to a provider is shown as "provider / model"; a provider offered on
-// its own (no specific model selected) is shown by name only.
+// Label returns a human-readable identifier for the option: the model shown
+// as "provider / model".
 func (m ModelOption) Label() string {
 	if m.ModelID == "" {
 		return m.Provider
@@ -26,28 +25,15 @@ func (m ModelOption) Label() string {
 }
 
 // AllModelOptionsFromProviders builds the selectable model list from the
-// configured ModelProviders in gcfg. A provider that lists models contributes
-// one option per model; a provider with no models still contributes a single
-// provider-level option so that every configured provider is represented in
-// the dropdown.
+// configured ModelProviders in gcfg. The dropdown is driven purely by the
+// available models: a provider contributes one option per listed model, and
+// a provider with no models contributes nothing.
 func AllModelOptionsFromProviders(gcfg *GConfig) []ModelOption {
 	var opts []ModelOption
 	if gcfg == nil {
 		return opts
 	}
 	for _, p := range gcfg.ModelProviders {
-		if len(p.Models) == 0 {
-			opts = append(opts, ModelOption{
-				ProviderID:   p.Name,
-				Provider:     p.Name,
-				ModelID:      "",
-				ModelName:    p.Name,
-				BaseURL:      p.BaseURL,
-				APIKey:       p.APIKey,
-				ProviderType: p.Type,
-			})
-			continue
-		}
 		for _, m := range p.Models {
 			opts = append(opts, ModelOption{
 				ProviderID:   p.Name,
@@ -55,7 +41,7 @@ func AllModelOptionsFromProviders(gcfg *GConfig) []ModelOption {
 				ModelID:      m,
 				ModelName:    m,
 				BaseURL:      p.BaseURL,
-				APIKey:       p.APIKey,
+				APIKey:       p.APIKey.String(),
 				ProviderType: p.Type,
 			})
 		}

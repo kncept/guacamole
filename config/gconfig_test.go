@@ -1,7 +1,9 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -246,15 +248,15 @@ func TestNormalizePreconfiguredProvider(t *testing.T) {
 		{ModelProviderTypeNvidia, "nVidia", "https://integrate.api.nvidia.com/v1"},
 		{ModelProviderTypeOpenCode, "OpenCode", "https://opencode.ai/v1"},
 	} {
-		got := NormalizeModelProvider(ModelProvider{Type: tc.typ, APIKey: "k"})
+		got := NormalizeModelProvider(ModelProvider{Type: tc.typ, APIKey: NewAPIKey("k")})
 		if got.Name != tc.name {
 			t.Errorf("%s: Name = %q, want %q", tc.typ, got.Name, tc.name)
 		}
 		if got.BaseURL != tc.baseURL {
 			t.Errorf("%s: BaseURL = %q, want %q", tc.typ, got.BaseURL, tc.baseURL)
 		}
-		if got.APIKey != "k" {
-			t.Errorf("%s: APIKey = %q, want %q", tc.typ, got.APIKey, "k")
+		if got.APIKey.String() != "k" {
+			t.Errorf("%s: APIKey = %q, want %q", tc.typ, got.APIKey.String(), "k")
 		}
 	}
 }
@@ -267,13 +269,13 @@ func TestNormalizeOpenAICompatibleUntouched(t *testing.T) {
 		Type:    ModelProviderTypeOpenAICompatible,
 		Name:    "My Local",
 		BaseURL: "http://localhost:8080/v1",
-		APIKey:  "abc",
+		APIKey:  NewAPIKey("abc"),
 	})
 	want := ModelProvider{
 		Type:    ModelProviderTypeOpenAICompatible,
 		Name:    "My Local",
 		BaseURL: "http://localhost:8080/v1",
-		APIKey:  "abc",
+		APIKey:  NewAPIKey("abc"),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("Normalize = %+v, want %+v", got, want)
@@ -284,7 +286,7 @@ func TestNormalizeOpenAICompatibleUntouched(t *testing.T) {
 // and removed by name.
 func TestAddRemoveModelProvider(t *testing.T) {
 	c := &GConfig{}
-	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeNvidia, APIKey: "nv"})
+	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeNvidia, APIKey: NewAPIKey("nv")})
 	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeOpenAICompatible, Name: "Mine", BaseURL: "http://x/v1"})
 
 	if len(c.ModelProviders) != 2 {
@@ -302,5 +304,112 @@ func TestAddRemoveModelProvider(t *testing.T) {
 	}
 	if c.RemoveModelProvider("nope") {
 		t.Error("RemoveModelProvider(nope) = true, want false")
+	}
+}
+
+// TestSaveObfuscatesAPIKey checks that an API key is written to the config
+// file in obfuscated form: the file must not contain the plain key, and a
+// fresh load must recover it via String().
+func TestSaveObfuscatesAPIKey(t *testing.T) {
+	home := withHome(t)
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	const secret = "sk-super-secret-key"
+	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeOpenAI, APIKey: NewAPIKey(secret)})
+	if err := c.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".guac", configFileName))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if bytes.Contains(data, []byte(secret)) {
+		t.Error("config file contains the plain API key, want it obfuscated")
+	}
+
+	c2, err := Load()
+	if err != nil {
+		t.Fatalf("Load (second): %v", err)
+	}
+	p, ok := c2.GetModelProvider(0)
+	if !ok {
+		t.Fatal("provider missing after reload")
+	}
+	if got := p.APIKey.String(); got != secret {
+		t.Errorf("APIKey = %q, want %q", got, secret)
+	}
+}
+
+// TestSaveNullAPIKey documents that a provider without an API key is written
+// as an explicit null rather than a plain empty string.
+func TestSaveNullAPIKey(t *testing.T) {
+	home := withHome(t)
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c.AddModelProvider(ModelProvider{
+		Type:    ModelProviderTypeOpenAICompatible,
+		Name:    "Mine",
+		BaseURL: "http://x/v1",
+	})
+	if err := c.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(home, ".guac", configFileName))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if !bytes.Contains(data, []byte(`"apiKey": null`)) {
+		t.Errorf("saved file = %s, want an explicit null apiKey", data)
+	}
+}
+
+// TestLoadUpgradesLegacyPlaintextAPIKey checks that a config file written by
+// an older version (plain-string apiKey) still loads, and that the key is
+// stored obfuscated again on the next save.
+func TestLoadUpgradesLegacyPlaintextAPIKey(t *testing.T) {
+	home := withHome(t)
+	dir := filepath.Join(home, ".guac")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const legacy = "nvapi-legacy-plain-key"
+	raw := fmt.Sprintf(`{
+		"modelProviders": [
+			{"name": "nVidia", "type": "nVidia", "baseUrl": "https://integrate.api.nvidia.com/v1", "apiKey": %q}
+		]
+	}`, legacy)
+	if err := os.WriteFile(filepath.Join(dir, configFileName), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p, ok := c.GetModelProvider(0)
+	if !ok {
+		t.Fatal("provider missing after legacy load")
+	}
+	if got := p.APIKey.String(); got != legacy {
+		t.Errorf("APIKey = %q, want %q", got, legacy)
+	}
+	if err := c.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(dir, configFileName))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if bytes.Contains(data, []byte(legacy)) {
+		t.Error("config file still contains the plain API key after save")
 	}
 }

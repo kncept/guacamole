@@ -61,6 +61,30 @@ func (c *chat) addAIMessage() *widget.Label {
 	return label
 }
 
+// addToolCall appends a tool-activity line for a call that is starting, and
+// returns the label so the caller can show the outcome on it in place once
+// the call finishes. The line is styled distinct from the message bubbles so
+// tool use stays visible without looking like part of the conversation.
+func (c *chat) addToolCall(summary string) *widget.Label {
+	label := widget.NewLabelWithStyle("→ "+summary, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
+	label.Wrapping = fyne.TextWrapWord
+	label.Importance = widget.LowImportance
+	c.log.Add(label)
+	c.scrollLog()
+	return label
+}
+
+// markToolError shows a failed tool call on its activity line. Successful
+// calls leave the line untouched: the reply that follows shows the result.
+func (c *chat) markToolError(label *widget.Label, summary string, err error) {
+	if label == nil {
+		return
+	}
+	label.SetText("→ " + summary + " — failed: " + err.Error())
+	label.Importance = widget.DangerImportance
+	c.scrollLog()
+}
+
 // addErrorMessage appends a centered error line for a failed turn.
 func (c *chat) addErrorMessage(err error) {
 	label := widget.NewLabelWithStyle("Error: "+err.Error(), fyne.TextAlignCenter, fyne.TextStyle{Italic: true})

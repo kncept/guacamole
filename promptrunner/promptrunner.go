@@ -144,7 +144,8 @@ func (this *promptRunner) Save() (string, error) {
 }
 
 // tracedTools wraps the file tools so every call is printed: tool activity
-// must be visible, otherwise a tool round looks like a hung prompt.
+// must be visible, otherwise a tool round looks like a hung prompt. Calls
+// are summarized (full command line for shells, the path for file tools).
 func (this *promptRunner) tracedTools(checker tools.AccessChecker) []ai.Tool {
 	ts := tools.AllTools(checker, this.questionHandler)
 	for i := range ts {
@@ -152,7 +153,7 @@ func (this *promptRunner) tracedTools(checker tools.AccessChecker) []ai.Tool {
 		handler := ts[i].Handler
 		ts[i].Handler = func(ctx context.Context, args json.RawMessage) (string, error) {
 			this.clearThinking()
-			fmt.Printf("→ %s %s\n", name, truncate(string(args), 80))
+			fmt.Printf("→ %s\n", tools.Summarize(name, args))
 			out, err := handler(ctx, args)
 			this.showThinking()
 			return out, err
@@ -184,12 +185,4 @@ const thinkingMessage = "thinking..."
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
 	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
-
-// truncate shortens s to at most n bytes, appending "..." if cut.
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n-3] + "..."
 }

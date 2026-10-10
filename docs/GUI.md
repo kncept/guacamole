@@ -87,10 +87,15 @@ Every session's model can call the tools from the `tools` package:
 - One shell tool per available console — `bash`, `sh`, and/or `zsh` — each
   running a command line.
 
-Tool calls run in the background as the model works; the GUI shows the final
-reply text but does not render individual tool invocations or prompt for write
-approval. (The README describes a per-directory write-approval flow, but it is
-not implemented in the current code — `write_file` runs unguarded.)
+Tool calls run in the background as the model works. Each call is shown in
+the transcript as an activity line the moment it starts — e.g.
+`→ bash: git status` (the full command line), `→ ls /tmp`,
+`→ edit_file src/main.go` (rendered by `tools.Summarize`) — and the line is
+marked with the error if the call fails. The final reply text follows once
+the model is done.
+
+Permission checks apply as in the CLI: when a call needs approval, the input
+area is replaced with the question and Allow/Deny buttons until you answer.
 
 ---
 

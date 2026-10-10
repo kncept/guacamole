@@ -12,7 +12,7 @@ func TestAllModelOptionsFromProvidersWithModels(t *testing.T) {
 				Name:    "OpenAI",
 				Type:    ModelProviderTypeOpenAI,
 				BaseURL: "https://api.openai.com/v1",
-				APIKey:  "k",
+				APIKey:  NewAPIKey("k"),
 				Models:  []string{"gpt-4o", "gpt-4o-mini"},
 			},
 		},
@@ -35,27 +35,18 @@ func TestAllModelOptionsFromProvidersWithModels(t *testing.T) {
 }
 
 // TestAllModelOptionsFromProviderWithoutModels checks that a provider with no
-// models still appears in the dropdown as a single provider-level option
-// (empty model ID, so the provider's own default applies).
+// models contributes nothing to the dropdown: the list is driven purely by
+// the available models.
 func TestAllModelOptionsFromProviderWithoutModels(t *testing.T) {
 	gcfg := &GConfig{
 		ModelProviders: []ModelProvider{
-			{Name: "nVidia", Type: ModelProviderTypeNvidia, BaseURL: "https://integrate.api.nvidia.com/v1", APIKey: "nv"},
+			{Name: "nVidia", Type: ModelProviderTypeNvidia, BaseURL: "https://integrate.api.nvidia.com/v1", APIKey: NewAPIKey("nv")},
 		},
 	}
 
 	got := AllModelOptionsFromProviders(gcfg)
-	if len(got) != 1 {
-		t.Fatalf("len = %d, want 1 (the provider itself)", len(got))
-	}
-	if got[0].Label() != "nVidia" {
-		t.Errorf("label = %q, want %q", got[0].Label(), "nVidia")
-	}
-	if got[0].ModelID != "" {
-		t.Errorf("ModelID = %q, want empty for a provider-level option", got[0].ModelID)
-	}
-	if got[0].ProviderType != ModelProviderTypeNvidia {
-		t.Errorf("ProviderType = %q, want %q", got[0].ProviderType, ModelProviderTypeNvidia)
+	if len(got) != 0 {
+		t.Fatalf("len = %d, want 0 (no models, nothing to show)", len(got))
 	}
 }
 

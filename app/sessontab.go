@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -108,10 +109,34 @@ func (st *sessionTab) session() *ai.Session {
 		sess.Model = st.selectedModel().ModelID
 		granter := &guiGranter{tab: st}
 		manager := permissions.NewPermissionsManager(st.guac.config, granter)
-		sess.Tools = tools.AllTools(manager, &guiQuestionHandler{tab: st})
+		sess.Tools = st.tracedTools(tools.AllTools(manager, &guiQuestionHandler{tab: st}))
 		st.chat.session = sess
 	}
 	return st.chat.session
+}
+
+// tracedTools wraps every tool so its use is shown in the session's chat log
+// as a line like "→ ls /tmp": tool activity must be visible, otherwise a
+// tool round looks like a frozen app. The line is added when the call
+// starts; if the call fails, the error is shown on the same line. Handlers
+// run in the session's goroutine, so log updates are marshalled onto the UI
+// thread.
+func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
+	for i := range ts {
+		name := ts[i].Name
+		handler := ts[i].Handler
+		ts[i].Handler = func(ctx context.Context, args json.RawMessage) (string, error) {
+			summary := tools.Summarize(name, args)
+			var label *widget.Label
+			fyne.Do(func() { label = st.chat.addToolCall(summary) })
+			out, err := handler(ctx, args)
+			if err != nil {
+				fyne.Do(func() { st.chat.markToolError(label, summary, err) })
+			}
+			return out, err
+		}
+	}
+	return ts
 }
 
 // loopProvider builds the REST provider for the session's selected model.

@@ -51,7 +51,7 @@ Permissions are grouped into three categories, all persisted in `~/.guac/config.
 The first time the model touches a path, runs a command or fetches a domain with no settled rule, you get a prompt:
 
 ```
-→ write_file {"path":"notes/todo.md","content":"..."}
+→ write_file notes/todo.md
 Grant filesystem write access to /home/me/notes/todo.md? [y/N]
 ```
 
@@ -96,7 +96,7 @@ session.Say(ctx, "my name is Ada")
 resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history is sent with every turn
 ```
 
-The REPL (`promptrunner`) is built on top of it: each prompt goes through a streaming session and prints chunks as they arrive, so a conversation has memory until you type `/new`. Tool calls are printed as they run (e.g. `→ read_file {"path":"go.mod"}`).
+The REPL (`promptrunner`) is built on top of it: each prompt goes through a streaming session and prints chunks as they arrive, so a conversation has memory until you type `/new`. Tool calls are printed as they run, summarized so the user sees what happens (e.g. `→ read_file go.mod`, `→ bash: git status`, `→ ls /tmp`). The GUI shows the same lines in the session's chat window while tools run.
 
 # Why Guac?
 
