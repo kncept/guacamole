@@ -38,17 +38,29 @@ func newBubble(text string, isUser bool) (*fyne.Container, *widget.Label) {
 }
 
 // addUserMessage appends the user's message as a bubble and returns the
-// thinking spinner shown against it while the query is in flight. The
-// spinner is hidden when the turn ends, so the bubble spans the full width.
+// thinking spinner shown as the bottommost entry while the query is in flight.
 func (c *chat) addUserMessage(text string) *widget.ProgressBarInfinite {
 	spinner := widget.NewProgressBarInfinite()
 	spinner.Hide()
 	bubble, _ := newBubble(text, true)
-	c.log.Add(container.NewBorder(nil, nil, spinner, nil, bubble))
+	c.log.Add(bubble)
+	// Add spinner as a separate entry at the bottom
+	c.log.Add(spinner)
 	c.scrollLog()
 	spinner.Show()
 	spinner.Start()
 	return spinner
+}
+
+// removeSpinner removes the in-progress spinner from the log (if present).
+func (c *chat) removeSpinner(spinner *widget.ProgressBarInfinite) {
+	if spinner == nil {
+		return
+	}
+	spinner.Stop()
+	spinner.Hide()
+	c.log.Remove(spinner)
+	c.scrollLog()
 }
 
 // addAIMessage appends an empty AI bubble that grows as reply chunks arrive.

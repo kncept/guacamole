@@ -321,7 +321,7 @@ func (st *sessionTab) inputBox() *fyne.Container {
 }
 
 // runPrompt sends the prompt through the session's AI loop, streaming the
-// reply into the session log. The spinner against the user bubble runs for
+// reply into the session log. The spinner at the bottom of the log runs for
 // as long as the query is active.
 func (st *sessionTab) runPrompt(text string) {
 	spinner := st.chat.addUserMessage(text)
@@ -332,24 +332,49 @@ func (st *sessionTab) runPrompt(text string) {
 		sess := st.session()
 		loop := sess.Loop
 		var aiLabel *widget.Label
+		var inToolRound bool
 		loop.OnChunk = func(chunk ai.Chunk) error {
 			reply.WriteString(chunk.Delta)
 			fyne.Do(func() {
+				// If we're starting a new response after a tool round, create a new bubble
+				if inToolRound {
+					aiLabel = st.chat.addAIMessage()
+					inToolRound = false
+				}
 				if aiLabel == nil {
 					aiLabel = st.chat.addAIMessage()
 				}
-				aiLabel.SetText(reply.String())
+				// Trim leading/trailing newlines from the accumulated response
+				displayText := strings.Trim(reply.String(), "\n")
+				aiLabel.SetText(displayText)
 				st.chat.scrollLog()
 			})
 			return nil
+		}
+		// Track when we enter a tool round so we can create a fresh bubble after
+		originalOnResponse := loop.OnResponse
+		loop.OnResponse = func(resp ai.Response) {
+			// Check if this response contains tool calls
+			hasTools := false
+			for _, msg := range resp.Messages {
+				if msg.Role == ai.RoleAssistant && msg.Name != "" {
+					hasTools = true
+					break
+				}
+			}
+			if hasTools {
+				inToolRound = true
+			}
+			if originalOnResponse != nil {
+				originalOnResponse(resp)
+			}
 		}
 		_, err := sess.Say(context.Background(), text)
 		fyne.Do(func() {
 			if err != nil {
 				st.chat.addErrorMessage(err)
 			}
-			spinner.Stop()
-			spinner.Hide()
+			st.chat.removeSpinner(spinner)
 			st.chat.scrollLog()
 		})
 	}()
