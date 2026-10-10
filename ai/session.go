@@ -127,6 +127,9 @@ func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 		if len(calls) == 0 {
 			return resp, nil
 		}
+		// TODO: Make this a user input operation
+		// where the user has the option to abort (as already happens) or
+		// to reset rounds and contune
 		if round >= maxRounds {
 			return resp, fmt.Errorf("ai: stopped after %d tool rounds", maxRounds)
 		}

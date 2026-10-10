@@ -144,8 +144,8 @@ func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
 func (st *sessionTab) loopProvider() ai.Provider {
 	opt := st.selectedModel()
 	provider, err := restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
-		BaseUrl:   opt.BaseURL,
-		ApiKey:    opt.APIKey,
+		BaseUrl:   opt.ExecutionBaseURL,
+		ApiKey:    opt.ExecutionAPIKey,
 		ModelName: opt.ModelID,
 	})
 	if err != nil {

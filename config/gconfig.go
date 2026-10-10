@@ -73,7 +73,7 @@ type DomainPermission struct {
 	Policy Policy `json:"policy"`
 }
 
-// ModelProviderType represents the type of model provider.
+// ModelProviderType represents the type of model provider (Execution API).
 type ModelProviderType string
 
 const (
@@ -87,6 +87,46 @@ const (
 	// ModelProviderTypeOpenCode is the preconfigured OpenCode provider.
 	ModelProviderTypeOpenCode ModelProviderType = "OpenCode"
 )
+
+// ModelListingType represents the type of model listing API.
+type ModelListingType string
+
+const (
+	// ModelListingTypeOpenAICompatible uses the standard OpenAI /v1/models endpoint.
+	ModelListingTypeOpenAICompatible ModelListingType = "OpenAI Compatible"
+	// ModelListingTypeOpenAI uses the OpenAI /v1/models endpoint.
+	ModelListingTypeOpenAI ModelListingType = "OpenAI"
+	// ModelListingTypeNvidia uses the nVidia /v1/models endpoint.
+	ModelListingTypeNvidia ModelListingType = "nVidia"
+	// ModelListingTypeOpenCode uses the OpenCode-specific endpoint.
+	ModelListingTypeOpenCode ModelListingType = "OpenCode"
+)
+
+// IsPreconfigured reports whether t is a model listing type that ships with a fixed
+// name and base URL.
+func (t ModelListingType) IsPreconfigured() bool {
+	switch t {
+	case ModelListingTypeOpenAI, ModelListingTypeNvidia, ModelListingTypeOpenCode:
+		return true
+	default:
+		return false
+	}
+}
+
+// PreconfiguredBaseURL returns the fixed base URL for a preconfigured
+// model listing provider, or an empty string when t is not preconfigured.
+func (t ModelListingType) PreconfiguredBaseURL() string {
+	switch t {
+	case ModelListingTypeOpenAI:
+		return "https://api.openai.com/v1"
+	case ModelListingTypeNvidia:
+		return "https://integrate.api.nvidia.com/v1"
+	case ModelListingTypeOpenCode:
+		return "https://opencode.ai"
+	default:
+		return ""
+	}
+}
 
 // providerDefaults holds the fixed name and base URL for the providers that
 // ship preconfigured: for these, only the API key is user-supplied.
@@ -129,14 +169,22 @@ type ModelProvider struct {
 	// Name is the user-friendly name of the provider (e.g., "OpenAI",
 	// "nVidia", "OpenCode", or a custom name for OpenAI Compatible).
 	Name string `json:"name"`
-	// Type is the type of provider.
-	Type ModelProviderType `json:"type"`
-	// BaseURL is the base URL for the provider's API.
-	BaseURL string `json:"baseUrl,omitempty"`
-	// APIKey is the API key for the provider (optional for OpenAI
+	// ExecutionType is the type of execution API provider.
+	ExecutionType ModelProviderType `json:"executionType"`
+	// ExecutionBaseURL is the base URL for the execution API.
+	ExecutionBaseURL string `json:"executionBaseUrl,omitempty"`
+	// ExecutionAPIKey is the API key for the execution API (optional for OpenAI
 	// Compatible), stored obfuscated so it is not readable straight out of
 	// the config file.
-	APIKey encryption.ObfuscatedValue `json:"apiKey"`
+	ExecutionAPIKey encryption.ObfuscatedValue `json:"executionApiKey"`
+	// ListingType is the type of model listing API provider.
+	ListingType ModelListingType `json:"listingType,omitempty"`
+	// ListingBaseURL is the base URL for the model listing API.
+	ListingBaseURL string `json:"listingBaseUrl,omitempty"`
+	// ListingAPIKey is the API key for the model listing API (optional for OpenAI
+	// Compatible), stored obfuscated so it is not readable straight out of
+	// the config file.
+	ListingAPIKey encryption.ObfuscatedValue `json:"listingApiKey,omitempty"`
 	// Models is the list of available model names.
 	Models []string `json:"models,omitempty"`
 }
@@ -201,7 +249,8 @@ func (this *GConfig) InitDefaults() {
 	// still sit in the file as plain text and is a no-op for values already
 	// stored obfuscated, so it is safe to run on every load.
 	for i := range this.ModelProviders {
-		this.ModelProviders[i].APIKey = this.ModelProviders[i].APIKey.Reobfuscated(apiKeyObfuscationKey)
+		this.ModelProviders[i].ExecutionAPIKey = this.ModelProviders[i].ExecutionAPIKey.Reobfuscated(apiKeyObfuscationKey)
+		this.ModelProviders[i].ListingAPIKey = this.ModelProviders[i].ListingAPIKey.Reobfuscated(apiKeyObfuscationKey)
 	}
 }
 
@@ -249,12 +298,19 @@ func (this *GConfig) GetModelProvider(i int) (ModelProvider, bool) {
 // provider that ships with fixed connection details, leaving user-supplied
 // values untouched.
 func NormalizeModelProvider(provider ModelProvider) ModelProvider {
-	if provider.Type.IsPreconfigured() {
+	// Execution API
+	if provider.ExecutionType.IsPreconfigured() {
 		if provider.Name == "" {
-			provider.Name = provider.Type.PreconfiguredName()
+			provider.Name = provider.ExecutionType.PreconfiguredName()
 		}
-		if provider.BaseURL == "" {
-			provider.BaseURL = provider.Type.PreconfiguredBaseURL()
+		if provider.ExecutionBaseURL == "" {
+			provider.ExecutionBaseURL = provider.ExecutionType.PreconfiguredBaseURL()
+		}
+	}
+	// Listing API
+	if provider.ListingType.IsPreconfigured() {
+		if provider.ListingBaseURL == "" {
+			provider.ListingBaseURL = provider.ListingType.PreconfiguredBaseURL()
 		}
 	}
 	return provider

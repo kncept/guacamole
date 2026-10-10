@@ -1,8 +1,6 @@
 package app
 
 import (
-	"sort"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
@@ -107,13 +105,19 @@ func (p *preferencesScreen) providersScreen() fyne.CanvasObject {
 	for i, prov := range providers {
 		idx := i
 		heading := prov.Name
-		if prov.Type != "" {
-			heading = heading + " (" + string(prov.Type) + ")"
+		if prov.ExecutionType != "" {
+			heading = heading + " (Execution: " + string(prov.ExecutionType) + ")"
+			if prov.ListingType != "" {
+				heading += " / Listing: " + string(prov.ListingType)
+			}
 		}
 		rows = append(rows, widget.NewLabelWithStyle(heading,
 			fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
-		if prov.BaseURL != "" {
-			rows = append(rows, widget.NewLabel(prov.BaseURL))
+		if prov.ExecutionBaseURL != "" {
+			rows = append(rows, widget.NewLabel("Execution: "+prov.ExecutionBaseURL))
+		}
+		if prov.ListingBaseURL != "" {
+			rows = append(rows, widget.NewLabel("Listing: "+prov.ListingBaseURL))
 		}
 		rows = append(rows, container.NewHBox(
 			widget.NewButton("Edit", func() { p.showEditProvider(idx) }),
@@ -214,11 +218,20 @@ var providerTypeOptions = []string{
 	string(config.ModelProviderTypeOpenCode),
 }
 
+// listingTypeOptions lists the model listing API types offered when adding a
+// provider, with the custom OpenAI-compatible option first.
+var listingTypeOptions = []string{
+	string(config.ModelListingTypeOpenAICompatible),
+	string(config.ModelListingTypeOpenAI),
+	string(config.ModelListingTypeNvidia),
+	string(config.ModelListingTypeOpenCode),
+}
+
 // showAddProvider replaces the main window content with the Add Provider
 // screen, the same way the Preferences screen does. It has a Cancel button
 // (top left) that returns to Preferences, and an Add button (top right) that
 // saves the provider and returns. The type dropdown offers the custom
-// "OpenAI Compatible" option first, then the preconfigured providers;
+// "OpenAI-compatible" option first, then the preconfigured providers;
 // "OpenAI Compatible" collects a name, base URL and optional API key, while
 // the preconfigured providers only ask for an API key since their name and
 // base URL are fixed.
@@ -230,11 +243,16 @@ func (p *preferencesScreen) showEditProvider(idx int) {
 	p.showProviderEditor(idx)
 }
 
+// showProviderEditor shows the editor for adding or editing a provider.
+// When OpenCode is selected as the Execution API, the Model Listing API is
+// automatically set to OpenCode and locked to that value.
 func (p *preferencesScreen) showProviderEditor(idx int) {
 	var (
-		nameEntry    *widget.Entry
-		baseURLEntry *widget.Entry
-		apiKeyEntry  *widget.Entry
+		nameEntry             *widget.Entry
+		executionBaseURLEntry *widget.Entry
+		executionAPIKeyEntry  *widget.Entry
+		listingBaseURLEntry   *widget.Entry
+		listingAPIKeyEntry    *widget.Entry
 	)
 	fields := container.NewVBox()
 
@@ -244,67 +262,139 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 		p.guac.showPreferences()
 	}
 
-	// buildFields lays out the type-specific fields for selectedType.
-	buildFields := func(selectedType string) {
-		apiKeyEntry = widget.NewEntry()
-		apiKeyEntry.SetPlaceHolder("API key")
-		apiKeyEntry.Password = true
+	// buildFields lays out the type-specific fields for selected execution and listing types.
+	buildFields := func(execType, listingType string) {
+		executionAPIKeyEntry = widget.NewEntry()
+		executionAPIKeyEntry.SetPlaceHolder("API key")
+		executionAPIKeyEntry.Password = true
+
+		listingAPIKeyEntry = widget.NewEntry()
+		listingAPIKeyEntry.SetPlaceHolder("API key (optional)")
+		listingAPIKeyEntry.Password = true
 
 		var form *widget.Form
-		if selectedType == string(config.ModelProviderTypeOpenAICompatible) {
+		isCustomExec := execType == string(config.ModelProviderTypeOpenAICompatible)
+		isCustomListing := listingType == string(config.ModelListingTypeOpenAICompatible)
+
+		items := []*widget.FormItem{}
+
+		if isCustomExec {
 			nameEntry = widget.NewEntry()
 			nameEntry.SetPlaceHolder("Provider name")
-			baseURLEntry = widget.NewEntry()
-			baseURLEntry.SetPlaceHolder("http://localhost:8080/v1")
-			form = &widget.Form{Items: []*widget.FormItem{
-				{Text: "Name", Widget: nameEntry},
-				{Text: "Base URL", Widget: baseURLEntry},
-				{Text: "API Key (optional)", Widget: apiKeyEntry},
-			}}
+			executionBaseURLEntry = widget.NewEntry()
+			executionBaseURLEntry.SetPlaceHolder("http://localhost:8080/v1")
+			items = append(items,
+				&widget.FormItem{Text: "Name", Widget: nameEntry},
+				&widget.FormItem{Text: "Execution Base URL", Widget: executionBaseURLEntry},
+				&widget.FormItem{Text: "Execution API Key", Widget: executionAPIKeyEntry},
+			)
 		} else {
-			// Preconfigured provider: only the API key is user-supplied.
-			form = &widget.Form{Items: []*widget.FormItem{
-				{Text: "API Key", Widget: apiKeyEntry},
-			}}
+			items = append(items, &widget.FormItem{Text: "Execution API Key", Widget: executionAPIKeyEntry})
 		}
+
+		// Listing API section
+		if isCustomListing {
+			listingBaseURLEntry = widget.NewEntry()
+			listingBaseURLEntry.SetPlaceHolder("http://localhost:8080/v1")
+			items = append(items,
+				&widget.FormItem{Text: "Listing Base URL", Widget: listingBaseURLEntry},
+				&widget.FormItem{Text: "Listing API Key (optional)", Widget: listingAPIKeyEntry},
+			)
+		} else if listingType != "" {
+			// Preconfigured listing type - just show API key
+			items = append(items, &widget.FormItem{Text: "Listing API Key (optional)", Widget: listingAPIKeyEntry})
+		}
+
+		form = &widget.Form{Items: items}
 		fields.Objects = []fyne.CanvasObject{form}
 		fields.Refresh()
 	}
 
-	typeSelect := widget.NewSelect(providerTypeOptions, func(s string) {
-		buildFields(s)
+	var execTypeSelect *widget.Select
+	var listingTypeSelect *widget.Select
+	
+	// updateListingTypeForExecutionType updates the listing type when execution type changes.
+	// If execution type is OpenCode, listing type must be OpenCode.
+	updateListingTypeForExecutionType := func(execType string) {
+		if execType == string(config.ModelProviderTypeOpenCode) {
+			listingTypeSelect.SetSelected(string(config.ModelListingTypeOpenCode))
+			listingTypeSelect.Disable()
+		} else {
+			listingTypeSelect.Enable()
+		}
+	}
+	
+	execTypeSelect = widget.NewSelect(providerTypeOptions, func(s string) {
+		updateListingTypeForExecutionType(s)
+		buildFields(s, listingTypeSelect.Selected)
 	})
-	buildFields(providerTypeOptions[0])
-	typeSelect.SetSelected(providerTypeOptions[0])
+	
+	listingTypeSelect = widget.NewSelect(listingTypeOptions, func(s string) {
+		buildFields(execTypeSelect.Selected, s)
+	})
+
+	buildFields(providerTypeOptions[0], listingTypeOptions[0])
+	execTypeSelect.SetSelected(providerTypeOptions[0])
+	listingTypeSelect.SetSelected(listingTypeOptions[0])
 
 	if idx >= 0 && p.guac.config != nil {
 		if prov, ok := p.guac.config.GetModelProvider(idx); ok {
-			typeSelect.SetSelected(string(prov.Type))
-			buildFields(string(prov.Type))
-			apiKeyEntry.SetText(prov.APIKey.String())
-			if prov.Type == config.ModelProviderTypeOpenAICompatible {
+			execTypeSelect.SetSelected(string(prov.ExecutionType))
+			listingTypeSelect.SetSelected(string(prov.ListingType))
+			buildFields(string(prov.ExecutionType), string(prov.ListingType))
+			
+			executionAPIKeyEntry.SetText(prov.ExecutionAPIKey.String())
+			listingAPIKeyEntry.SetText(prov.ListingAPIKey.String())
+			
+			if prov.ExecutionType == config.ModelProviderTypeOpenAICompatible {
 				nameEntry.SetText(prov.Name)
-				baseURLEntry.SetText(prov.BaseURL)
+				executionBaseURLEntry.SetText(prov.ExecutionBaseURL)
 			} else {
 				nameEntry = nil
-				baseURLEntry = nil
+				executionBaseURLEntry = nil
 			}
-			typeSelect.Disable()
+			
+			if prov.ListingType == config.ModelListingTypeOpenAICompatible {
+				listingBaseURLEntry.SetText(prov.ListingBaseURL)
+			} else {
+				listingBaseURLEntry = nil
+			}
+			
+			execTypeSelect.Disable()
+			listingTypeSelect.Disable()
+			
+			// Apply the OpenCode constraint for existing providers too
+			updateListingTypeForExecutionType(string(prov.ExecutionType))
 		}
 	}
 
 	saveProvider := func() {
-		providerType := config.ModelProviderType(typeSelect.Selected)
-		provider := config.ModelProvider{Type: providerType}
-		if providerType == config.ModelProviderTypeOpenAICompatible {
-			provider.Name = nameEntry.Text
-			provider.BaseURL = baseURLEntry.Text
-			provider.APIKey = config.NewAPIKey(apiKeyEntry.Text)
-		} else {
-			provider.Name = providerType.PreconfiguredName()
-			provider.BaseURL = providerType.PreconfiguredBaseURL()
-			provider.APIKey = config.NewAPIKey(apiKeyEntry.Text)
+		execProviderType := config.ModelProviderType(execTypeSelect.Selected)
+		listingProviderType := config.ModelListingType(listingTypeSelect.Selected)
+		
+		provider := config.ModelProvider{
+			ExecutionType: execProviderType,
+			ListingType:   listingProviderType,
 		}
+		
+		if execProviderType == config.ModelProviderTypeOpenAICompatible {
+			provider.Name = nameEntry.Text
+			provider.ExecutionBaseURL = executionBaseURLEntry.Text
+			provider.ExecutionAPIKey = config.NewAPIKey(executionAPIKeyEntry.Text)
+		} else {
+			provider.Name = execProviderType.PreconfiguredName()
+			provider.ExecutionBaseURL = execProviderType.PreconfiguredBaseURL()
+			provider.ExecutionAPIKey = config.NewAPIKey(executionAPIKeyEntry.Text)
+		}
+		
+		if listingProviderType == config.ModelListingTypeOpenAICompatible {
+			provider.ListingBaseURL = listingBaseURLEntry.Text
+			provider.ListingAPIKey = config.NewAPIKey(listingAPIKeyEntry.Text)
+		} else if listingProviderType != "" {
+			provider.ListingBaseURL = listingProviderType.PreconfiguredBaseURL()
+			provider.ListingAPIKey = config.NewAPIKey(listingAPIKeyEntry.Text)
+		}
+		
 		if p.guac.config != nil {
 			if idx >= 0 {
 				if existing, ok := p.guac.config.GetModelProvider(idx); ok {
@@ -327,8 +417,10 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 	)
 
 	body := container.NewVBox(
-		widget.NewLabel("Provider type:"),
-		typeSelect,
+		widget.NewLabel("Execution API:"),
+		execTypeSelect,
+		widget.NewLabel("Model Listing API:"),
+		listingTypeSelect,
 		fields,
 	)
 	p.guac.w.SetContent(container.NewBorder(header, nil, nil, nil,
@@ -345,55 +437,149 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 		p.guac.showPreferences()
 	}
 
-	rows := container.NewVBox()
+	// Use a Table to display model info with columns for ID, Size, Free, Description
+	modelTable := widget.NewTable(
+		func() (int, int) { return 0, 0 },
+		func() fyne.CanvasObject {
+			return widget.NewLabel("")
+		},
+		func(id widget.TableCellID, obj fyne.CanvasObject) {
+		},
+	)
 
-	populate := func(models []string, prechecked map[string]bool) {
-		rows.Objects = nil
-		checks := make([]*widget.Check, 0, len(models))
-		for _, m := range models {
-			c := widget.NewCheck(m, nil)
-			if prechecked != nil && prechecked[m] {
-				c.Checked = true
-			}
-			checks = append(checks, c)
-			rows.Add(c)
-		}
-		rows.Refresh()
-	}
-
-	checked := make(map[string]bool, len(prov.Models))
-	for _, m := range prov.Models {
-		checked[m] = true
-	}
-
+	// Store the fetched model info for saving
+	var modelInfos []restfulai.ModelInfo
 	var checks []*widget.Check
 
-	// fetchAndPopulate runs on a background goroutine (the models are
-	// fetched over the network), so its UI updates must be marshalled onto
-	// the UI thread.
+	// populateTable fills the table with model info
+	populateTable := func(infos []restfulai.ModelInfo) {
+		modelInfos = infos
+		
+		// Determine which columns have data
+		hasSize := false
+		hasFree := false
+		hasDescription := false
+		for _, m := range infos {
+			if m.Size != "" {
+				hasSize = true
+			}
+			if m.IsFree {
+				hasFree = true
+			}
+			if m.Description != "" {
+				hasDescription = true
+			}
+		}
+		
+		// Build column count: always have Model ID (col 0), then optional columns
+		numCols := 1
+		colSize := -1
+		colFree := -1
+		colDesc := -1
+		
+		if hasSize {
+			colSize = numCols
+			numCols++
+		}
+		if hasFree {
+			colFree = numCols
+			numCols++
+		}
+		if hasDescription {
+			colDesc = numCols
+			numCols++
+		}
+		
+		// Add checkbox column for selection
+		colCheck := numCols
+		numCols++
+		
+		// Create check boxes for each model
+		checks = make([]*widget.Check, len(infos))
+		for i := range infos {
+			checked := false
+			for _, m := range prov.Models {
+				if m == infos[i].ID {
+					checked = true
+					break
+				}
+			}
+			checks[i] = widget.NewCheck("", nil)
+			checks[i].Checked = checked
+		}
+		
+		// Update table dimensions and content
+		modelTable.Length = func() (int, int) {
+			return len(infos) + 1, numCols // +1 for header
+		}
+		
+		modelTable.CreateCell = func() fyne.CanvasObject {
+			return widget.NewLabel("")
+		}
+		
+		modelTable.UpdateCell = func(id widget.TableCellID, obj fyne.CanvasObject) {
+			label := obj.(*widget.Label)
+			if id.Row == 0 {
+				// Header row
+				switch id.Col {
+				case 0:
+					label.SetText("Model ID")
+				case colSize:
+					label.SetText("Size")
+				case colFree:
+					label.SetText("Free")
+				case colDesc:
+					label.SetText("Description")
+				case colCheck:
+					label.SetText("Select")
+				}
+				label.TextStyle = fyne.TextStyle{Bold: true}
+			} else {
+				// Data row
+				m := infos[id.Row-1]
+				switch id.Col {
+				case 0:
+					label.SetText(m.ID)
+				case colSize:
+					label.SetText(m.Size)
+				case colFree:
+					if m.IsFree {
+						label.SetText("Yes")
+					} else {
+						label.SetText("")
+					}
+				case colDesc:
+					label.SetText(m.Description)
+				case colCheck:
+					// For checkbox column, we need a different approach
+					// Use a container with the checkbox
+					label.SetText("")
+				}
+				label.TextStyle = fyne.TextStyle{}
+			}
+			label.Refresh()
+		}
+		
+		modelTable.Refresh()
+	}
+
+	// fetchAndPopulate runs on a background goroutine
 	fetchAndPopulate := func() {
-		models, err := restfulai.ListModels(prov.BaseURL, prov.APIKey.String())
+		infos, err := restfulai.ListModelsWithInfoForProvider(prov.ListingType, prov.ListingBaseURL, prov.ListingAPIKey.String())
 		if err != nil {
 			fyne.Do(func() { dialog.ShowError(err, p.guac.w) })
 			return
 		}
-		sort.Strings(models)
 		fyne.Do(func() {
-			populate(models, checked)
-			checks = []*widget.Check{}
-			for _, obj := range rows.Objects {
-				if c, ok := obj.(*widget.Check); ok {
-					checks = append(checks, c)
-				}
-			}
+			populateTable(infos)
 		})
 	}
 
 	save := func() {
 		var models []string
-		for _, c := range checks {
-			if c.Checked {
-				models = append(models, c.Text)
+		for i, c := range checks {
+			if c.Checked && i < len(modelInfos) {
+				models = append(models, modelInfos[i].ID)
 			}
 		}
 		prov.Models = models
@@ -405,22 +591,115 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 		goBack()
 	}
 
-	models := make([]string, len(prov.Models))
-	copy(models, prov.Models)
-	sort.Strings(models)
-	populate(models, checked)
-	checks = []*widget.Check{}
-	for _, obj := range rows.Objects {
-		if c, ok := obj.(*widget.Check); ok {
-			checks = append(checks, c)
-		}
+	// Initial population with existing models (just IDs)
+	initialInfos := make([]restfulai.ModelInfo, len(prov.Models))
+	for i, m := range prov.Models {
+		initialInfos[i] = restfulai.ModelInfo{ID: m}
 	}
+	populateTable(initialInfos)
+
+	// Automatically fetch the latest models from the provider when opening.
+	go fetchAndPopulate()
 
 	header := container.NewBorder(nil, nil,
 		widget.NewButtonWithIcon("Cancel", theme.NavigateBackIcon(), goBack),
 		container.NewHBox(widget.NewButtonWithIcon("Re-fetch Models", theme.DownloadIcon(), fetchAndPopulate), widget.NewButtonWithIcon("Save", theme.ContentAddIcon(), save)),
 		widget.NewLabelWithStyle("Provider Models", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
 	)
+
+	// We need to handle the checkbox column specially - create a custom container for the table
+	// For now, let's use a simpler approach with a VBox of rows, each row being a HBox with checkbox and labels
+	rows := container.NewVBox()
+	
+	// Re-implement with a simpler approach that works better with checkboxes
+	populate := func(infos []restfulai.ModelInfo) {
+		modelInfos = infos
+		rows.Objects = nil
+		checks = make([]*widget.Check, 0, len(infos))
+		
+		// Determine which columns have data
+		hasSize := false
+		hasFree := false
+		hasDescription := false
+		for _, m := range infos {
+			if m.Size != "" {
+				hasSize = true
+			}
+			if m.IsFree {
+				hasFree = true
+			}
+			if m.Description != "" {
+				hasDescription = true
+			}
+		}
+		
+		// Header row
+		headerParts := []fyne.CanvasObject{widget.NewLabelWithStyle("Model ID", fyne.TextAlignLeading, fyne.TextStyle{Bold: true})}
+		if hasSize {
+			headerParts = append(headerParts, widget.NewLabelWithStyle("Size", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		}
+		if hasFree {
+			headerParts = append(headerParts, widget.NewLabelWithStyle("Free", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		}
+		if hasDescription {
+			headerParts = append(headerParts, widget.NewLabelWithStyle("Description", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		}
+		headerParts = append(headerParts, widget.NewLabelWithStyle("Select", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+		rows.Add(container.NewHBox(headerParts...))
+		rows.Add(widget.NewSeparator())
+		
+		// Data rows
+		for _, m := range infos {
+			checked := false
+			for _, existing := range prov.Models {
+				if existing == m.ID {
+					checked = true
+					break
+				}
+			}
+			c := widget.NewCheck("", nil)
+			c.Checked = checked
+			checks = append(checks, c)
+			
+			rowParts := []fyne.CanvasObject{widget.NewLabel(m.ID)}
+			if hasSize {
+				rowParts = append(rowParts, widget.NewLabel(m.Size))
+			}
+			if hasFree {
+				freeLabel := ""
+				if m.IsFree {
+					freeLabel = "Yes"
+				}
+				rowParts = append(rowParts, widget.NewLabel(freeLabel))
+			}
+			if hasDescription {
+				rowParts = append(rowParts, widget.NewLabel(m.Description))
+			}
+			rowParts = append(rowParts, c)
+			
+			rows.Add(container.NewHBox(rowParts...))
+		}
+		rows.Refresh()
+	}
+
+	// Replace the fetchAndPopulate to use the new populate function
+	fetchAndPopulate = func() {
+		infos, err := restfulai.ListModelsWithInfoForProvider(prov.ListingType, prov.ListingBaseURL, prov.ListingAPIKey.String())
+		if err != nil {
+			fyne.Do(func() { dialog.ShowError(err, p.guac.w) })
+			return
+		}
+		fyne.Do(func() {
+			populate(infos)
+		})
+	}
+
+	// Initial population with existing models (just IDs)
+	initialInfos = make([]restfulai.ModelInfo, len(prov.Models))
+	for i, m := range prov.Models {
+		initialInfos[i] = restfulai.ModelInfo{ID: m}
+	}
+	populate(initialInfos)
 
 	// Automatically fetch the latest models from the provider when opening.
 	go fetchAndPopulate()

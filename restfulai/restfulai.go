@@ -4,8 +4,12 @@ package restfulai
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
+	"strings"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
@@ -161,6 +165,96 @@ func ListModels(baseURL, apiKey string) ([]string, error) {
 		return nil, fmt.Errorf("restfulai: list models from %s: %w", baseURL, err)
 	}
 	return models, nil
+}
+
+// ModelInfo represents a model with additional metadata.
+type ModelInfo struct {
+	ID          string
+	Size        string // e.g., "7B", "70B"
+	IsFree      bool   // whether the model is free
+	Description string
+}
+
+// ListModelsWithInfo fetches available models with additional metadata from
+// an OpenAI-compatible endpoint at baseURL using apiKey for authentication.
+// This is a generic implementation that only returns model IDs; specific
+// providers may override this with richer data.
+func ListModelsWithInfo(baseURL, apiKey string) ([]ModelInfo, error) {
+	ids, err := ListModels(baseURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	var infos []ModelInfo
+	for _, id := range ids {
+		infos = append(infos, ModelInfo{ID: id})
+	}
+	return infos, nil
+}
+
+// ListModelsWithInfoForProvider fetches models with info based on the provider
+// listing type. It dispatches to provider-specific implementations.
+func ListModelsWithInfoForProvider(listingType config.ModelListingType, listingBaseURL, listingAPIKey string) ([]ModelInfo, error) {
+	switch listingType {
+	case config.ModelListingTypeOpenCode:
+		return ListModelsOpenCode(listingBaseURL, listingAPIKey)
+	default:
+		return ListModelsWithInfo(listingBaseURL, listingAPIKey)
+	}
+}
+
+// ListModelsOpenCode fetches models from the OpenCode API.
+// GET https://opencode.ai/zen/go/v1/models
+func ListModelsOpenCode(baseURL, apiKey string) ([]ModelInfo, error) {
+	if baseURL == "" {
+		baseURL = "https://opencode.ai"
+	}
+	// The OpenCode models endpoint
+	url := strings.TrimSuffix(baseURL, "/") + "/zen/go/v1/models"
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opencode: create request: %w", err)
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("opencode: fetch models: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("opencode: fetch models: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Models []struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Size        string `json:"size"`
+			Description string `json:"description"`
+			Free        bool   `json:"free"`
+		} `json:"models"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("opencode: decode response: %w", err)
+	}
+
+	var infos []ModelInfo
+	for _, m := range result.Models {
+		infos = append(infos, ModelInfo{
+			ID:          m.ID,
+			Size:        m.Size,
+			IsFree:      m.Free,
+			Description: m.Description,
+		})
+	}
+	return infos, nil
 }
 
 // params translates a normalized ai.Request into openai-go request params.

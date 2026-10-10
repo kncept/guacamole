@@ -41,8 +41,8 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 		p := &gcfg.ModelProviders[i]
 		if len(p.Models) > 0 {
 			conf := &ApiModelInterfaceDetails{
-				BaseUrl:   p.BaseURL,
-				ApiKey:    p.APIKey.String(),
+				BaseUrl:   p.ExecutionBaseURL,
+				ApiKey:    p.ExecutionAPIKey.String(),
 				ModelName: p.Models[0],
 			}
 			fmt.Printf("config: using model %s via %s (api key: %s)\n",
@@ -55,8 +55,8 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 	}
 
 	conf := &ApiModelInterfaceDetails{
-		BaseUrl: fallback.BaseURL,
-		ApiKey:  fallback.APIKey.String(),
+		BaseUrl: fallback.ExecutionBaseURL,
+		ApiKey:  fallback.ExecutionAPIKey.String(),
 	}
 	fmt.Printf("config: using provider %s via %s (api key: %s)\n",
 		fallback.Name, conf.BaseUrl, apiKeyStatus(conf.ApiKey))
