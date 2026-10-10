@@ -6,19 +6,16 @@ import "sort"
 // details needed to call it. It is the unit the GUI's "Provider / Model"
 // dropdown is built from.
 type ModelOption struct {
-	ProviderID        string
-	Provider          string
-	ModelID           string
-	ModelName         string
-	ExecutionBaseURL  string
-	ExecutionAPIKey   string
-	ListingBaseURL    string
-	ListingAPIKey     string
-	ProviderType      ModelProviderType
-	ListingType       ModelListingType
-	Size              string // e.g., "7B", "70B"
-	IsFree            bool   // whether the model is free
-	Description       string
+	ProviderID   string
+	Provider     string
+	ModelID      string
+	ModelName    string
+	BaseURL      string
+	APIKey       string
+	ProviderType ModelProviderType
+	Size         string // e.g., "7B", "70B"
+	IsFree       bool   // whether the model is free
+	Description  string
 }
 
 // Label returns a human-readable identifier for the option: the model shown
@@ -42,16 +39,13 @@ func AllModelOptionsFromProviders(gcfg *GConfig) []ModelOption {
 	for _, p := range gcfg.ModelProviders {
 		for _, m := range p.Models {
 			opts = append(opts, ModelOption{
-				ProviderID:       p.Name,
-				Provider:         p.Name,
-				ModelID:          m,
-				ModelName:        m,
-				ExecutionBaseURL: p.ExecutionBaseURL,
-				ExecutionAPIKey:  p.ExecutionAPIKey.String(),
-				ListingBaseURL:   p.ListingBaseURL,
-				ListingAPIKey:    p.ListingAPIKey.String(),
-				ProviderType:     p.ExecutionType,
-				ListingType:      p.ListingType,
+				ProviderID:   p.Name,
+				Provider:     p.Name,
+				ModelID:      m,
+				ModelName:    m,
+				BaseURL:      p.BaseURL,
+				APIKey:       p.APIKey.String(),
+				ProviderType: p.APIType,
 			})
 		}
 	}

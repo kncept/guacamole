@@ -18,6 +18,7 @@ func GuacDir() (string, error) {
 }
 
 type ApiModelInterfaceDetails struct {
+	APIType   ModelProviderType
 	BaseUrl   string
 	ApiKey    string
 	ModelName string
@@ -41,8 +42,9 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 		p := &gcfg.ModelProviders[i]
 		if len(p.Models) > 0 {
 			conf := &ApiModelInterfaceDetails{
-				BaseUrl:   p.ExecutionBaseURL,
-				ApiKey:    p.ExecutionAPIKey.String(),
+				APIType:   p.APIType,
+				BaseUrl:   p.BaseURL,
+				ApiKey:    p.APIKey.String(),
 				ModelName: p.Models[0],
 			}
 			fmt.Printf("config: using model %s via %s (api key: %s)\n",
@@ -55,8 +57,9 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 	}
 
 	conf := &ApiModelInterfaceDetails{
-		BaseUrl: fallback.ExecutionBaseURL,
-		ApiKey:  fallback.ExecutionAPIKey.String(),
+		APIType: fallback.APIType,
+		BaseUrl: fallback.BaseURL,
+		ApiKey:  fallback.APIKey.String(),
 	}
 	fmt.Printf("config: using provider %s via %s (api key: %s)\n",
 		fallback.Name, conf.BaseUrl, apiKeyStatus(conf.ApiKey))

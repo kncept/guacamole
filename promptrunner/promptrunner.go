@@ -13,7 +13,7 @@ import (
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
-	"github.com/kncept/guacamole/restfulai"
+	"github.com/kncept/guacamole/modelclient"
 	"github.com/kncept/guacamole/sessionstore"
 	"github.com/kncept/guacamole/tools"
 )
@@ -58,7 +58,7 @@ type promptRunner struct {
 func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string, checker tools.AccessChecker, questionHandler tools.UserQuestionCallbackHandler) (PromptRunner, error) {
 	sessionsDir := cfg.SessionsDir
 
-	provider, err := restfulai.NewRestfulAI(conf)
+	provider, err := modelclient.New(conf)
 	if err != nil {
 		return nil, err
 	}

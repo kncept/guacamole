@@ -1,6 +1,8 @@
 package restfulai
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/kncept/guacamole/ai"
@@ -84,5 +86,60 @@ func TestParamsToolMessages(t *testing.T) {
 
 	if items[3].OfMessage == nil || items[3].OfMessage.Role != "assistant" {
 		t.Errorf("items[3] = %+v, want an assistant message", items[3])
+	}
+}
+
+// TestListModelsOpenCodeStandardShape checks that the standard OpenAI listing
+// shape returned by https://opencode.ai/zen/v1/models is parsed, and that
+// "-free" models are marked free.
+func TestListModelsOpenCodeStandardShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("path = %q, want %q", r.URL.Path, "/models")
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
+			t.Errorf("Authorization = %q, want %q", got, "Bearer secret")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[
+			{"id":"claude-opus-5","object":"model","created":1791634803,"owned_by":"opencode"},
+			{"id":"ling-3.1-flash-free","object":"model","created":1791634803,"owned_by":"opencode"}
+		]}`))
+	}))
+	defer srv.Close()
+
+	infos, err := ListModelsOpenCode(srv.URL, "secret")
+	if err != nil {
+		t.Fatalf("ListModelsOpenCode: %v", err)
+	}
+	if len(infos) != 2 {
+		t.Fatalf("got %d models, want 2: %+v", len(infos), infos)
+	}
+	if infos[0].ID != "claude-opus-5" || infos[0].IsFree {
+		t.Errorf("infos[0] = %+v, want claude-opus-5 not free", infos[0])
+	}
+	if infos[1].ID != "ling-3.1-flash-free" || !infos[1].IsFree {
+		t.Errorf("infos[1] = %+v, want ling-3.1-flash-free marked free", infos[1])
+	}
+}
+
+// TestListModelsOpenCodeLegacyShape checks the legacy {"models":[...]} shape
+// is still accepted for older OpenCode deployments.
+func TestListModelsOpenCodeLegacyShape(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"models":[{"id":"gpt-oss-120b","size":"120B","free":true,"description":"Big"}]}`))
+	}))
+	defer srv.Close()
+
+	infos, err := ListModelsOpenCode(srv.URL, "")
+	if err != nil {
+		t.Fatalf("ListModelsOpenCode: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("got %d models, want 1: %+v", len(infos), infos)
+	}
+	if infos[0].ID != "gpt-oss-120b" || infos[0].Size != "120B" || !infos[0].IsFree || infos[0].Description != "Big" {
+		t.Errorf("infos[0] = %+v", infos[0])
 	}
 }

@@ -191,25 +191,23 @@ func ListModelsWithInfo(baseURL, apiKey string) ([]ModelInfo, error) {
 	return infos, nil
 }
 
-// ListModelsWithInfoForProvider fetches models with info based on the provider
-// listing type. It dispatches to provider-specific implementations.
-func ListModelsWithInfoForProvider(listingType config.ModelListingType, listingBaseURL, listingAPIKey string) ([]ModelInfo, error) {
-	switch listingType {
-	case config.ModelListingTypeOpenCode:
-		return ListModelsOpenCode(listingBaseURL, listingAPIKey)
-	default:
-		return ListModelsWithInfo(listingBaseURL, listingAPIKey)
-	}
-}
-
-// ListModelsOpenCode fetches models from the OpenCode API.
-// GET https://opencode.ai/zen/go/v1/models
+// ListModelsOpenCode fetches models from the OpenCode API. baseURL is the
+// OpenCode base URL (for example https://opencode.ai/zen/v1); the listing
+// endpoint is baseURL/models.
+//
+// Despite being a provider-specific path, the endpoint returns the standard
+// OpenAI listing shape:
+//
+//	{"object":"list","data":[{"id":"...","object":"model","owned_by":"opencode"}]}
+//
+// Free models are named with a "-free" suffix. The legacy {"models":[...]}
+// shape is still accepted for older deployments.
 func ListModelsOpenCode(baseURL, apiKey string) ([]ModelInfo, error) {
 	if baseURL == "" {
-		baseURL = "https://opencode.ai"
+		baseURL = "https://opencode.ai/zen/v1"
 	}
 	// The OpenCode models endpoint
-	url := strings.TrimSuffix(baseURL, "/") + "/zen/go/v1/models"
+	url := strings.TrimSuffix(baseURL, "/") + "/models"
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -232,9 +230,13 @@ func ListModelsOpenCode(baseURL, apiKey string) ([]ModelInfo, error) {
 	}
 
 	var result struct {
+		// Standard OpenAI listing shape.
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+		// Legacy OpenCode listing shape.
 		Models []struct {
 			ID          string `json:"id"`
-			Name        string `json:"name"`
 			Size        string `json:"size"`
 			Description string `json:"description"`
 			Free        bool   `json:"free"`
@@ -246,6 +248,19 @@ func ListModelsOpenCode(baseURL, apiKey string) ([]ModelInfo, error) {
 	}
 
 	var infos []ModelInfo
+	if len(result.Data) > 0 {
+		for _, m := range result.Data {
+			if m.ID == "" {
+				continue
+			}
+			infos = append(infos, ModelInfo{
+				ID:     m.ID,
+				IsFree: strings.HasSuffix(m.ID, "-free"),
+			})
+		}
+		return infos, nil
+	}
+
 	for _, m := range result.Models {
 		infos = append(infos, ModelInfo{
 			ID:          m.ID,

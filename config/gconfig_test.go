@@ -235,25 +235,28 @@ func TestInitDefaultsShellPolicy(t *testing.T) {
 	}
 }
 
-// TestNormalizePreconfiguredProvider documents that a preconfigured provider
-// (OpenAI / nVidia / OpenCode) is filled in with its fixed name and base URL,
-// so only the API key needs to be supplied.
-func TestNormalizePreconfiguredProvider(t *testing.T) {
+// TestNormalizeFillsDefaultsByAPIType documents that NormalizeModelProvider
+// fills in a name and base URL derived from the API type, so a provider only
+// needs its API type (and usually its key) to be usable.
+func TestNormalizeFillsDefaultsByAPIType(t *testing.T) {
 	for _, tc := range []struct {
 		typ     ModelProviderType
 		name    string
 		baseURL string
 	}{
 		{ModelProviderTypeOpenAI, "OpenAI", "https://api.openai.com/v1"},
-		{ModelProviderTypeNvidia, "nVidia", "https://integrate.api.nvidia.com/v1"},
-		{ModelProviderTypeOpenCode, "OpenCode", "https://opencode.ai/v1"},
+		{ModelProviderTypeAnthropic, "Anthropic", "https://api.anthropic.com/v1"},
+		{ModelProviderTypeOpenCode, "OpenCode", "https://opencode.ai/zen/v1"},
 	} {
-		got := NormalizeModelProvider(ModelProvider{Type: tc.typ, APIKey: NewAPIKey("k")})
+		got := NormalizeModelProvider(ModelProvider{APIType: tc.typ, APIKey: NewAPIKey("k")})
 		if got.Name != tc.name {
 			t.Errorf("%s: Name = %q, want %q", tc.typ, got.Name, tc.name)
 		}
 		if got.BaseURL != tc.baseURL {
 			t.Errorf("%s: BaseURL = %q, want %q", tc.typ, got.BaseURL, tc.baseURL)
+		}
+		if got.APIType != tc.typ {
+			t.Errorf("%s: APIType = %q, want %q", tc.typ, got.APIType, tc.typ)
 		}
 		if got.APIKey.String() != "k" {
 			t.Errorf("%s: APIKey = %q, want %q", tc.typ, got.APIKey.String(), "k")
@@ -261,18 +264,17 @@ func TestNormalizePreconfiguredProvider(t *testing.T) {
 	}
 }
 
-// TestNormalizeOpenAICompatibleUntouched documents that a custom OpenAI
-// Compatible provider keeps the user-supplied name, base URL and key and is
-// not given any defaults.
-func TestNormalizeOpenAICompatibleUntouched(t *testing.T) {
+// TestNormalizeKeepsSuppliedValues documents that a provider with explicit
+// values keeps them and is not given defaults.
+func TestNormalizeKeepsSuppliedValues(t *testing.T) {
 	got := NormalizeModelProvider(ModelProvider{
-		Type:    ModelProviderTypeOpenAICompatible,
+		APIType: ModelProviderTypeOpenAI,
 		Name:    "My Local",
 		BaseURL: "http://localhost:8080/v1",
 		APIKey:  NewAPIKey("abc"),
 	})
 	want := ModelProvider{
-		Type:    ModelProviderTypeOpenAICompatible,
+		APIType: ModelProviderTypeOpenAI,
 		Name:    "My Local",
 		BaseURL: "http://localhost:8080/v1",
 		APIKey:  NewAPIKey("abc"),
@@ -286,18 +288,18 @@ func TestNormalizeOpenAICompatibleUntouched(t *testing.T) {
 // and removed by name.
 func TestAddRemoveModelProvider(t *testing.T) {
 	c := &GConfig{}
-	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeNvidia, APIKey: NewAPIKey("nv")})
-	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeOpenAICompatible, Name: "Mine", BaseURL: "http://x/v1"})
+	c.AddModelProvider(ModelProvider{APIType: ModelProviderTypeAnthropic, Name: "Anthropic"})
+	c.AddModelProvider(ModelProvider{APIType: ModelProviderTypeOpenAI, Name: "Mine", BaseURL: "http://x/v1"})
 
 	if len(c.ModelProviders) != 2 {
 		t.Fatalf("len(ModelProviders) = %d, want 2", len(c.ModelProviders))
 	}
-	if c.ModelProviders[0].Name != "nVidia" || c.ModelProviders[0].BaseURL != "https://integrate.api.nvidia.com/v1" {
-		t.Errorf("normalized nVidia provider = %+v", c.ModelProviders[0])
+	if c.ModelProviders[0].Name != "Anthropic" || c.ModelProviders[0].APIType != ModelProviderTypeAnthropic {
+		t.Errorf("added Anthropic provider = %+v", c.ModelProviders[0])
 	}
 
-	if !c.RemoveModelProvider("nVidia") {
-		t.Error("RemoveModelProvider(nVidia) = false, want true")
+	if !c.RemoveModelProvider("Anthropic") {
+		t.Error("RemoveModelProvider(Anthropic) = false, want true")
 	}
 	if len(c.ModelProviders) != 1 || c.ModelProviders[0].Name != "Mine" {
 		t.Errorf("after removal ModelProviders = %+v, want just Mine", c.ModelProviders)
@@ -318,7 +320,7 @@ func TestSaveObfuscatesAPIKey(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	const secret = "sk-super-secret-key"
-	c.AddModelProvider(ModelProvider{Type: ModelProviderTypeOpenAI, APIKey: NewAPIKey(secret)})
+	c.AddModelProvider(ModelProvider{APIType: ModelProviderTypeOpenAI, Name: "OpenAI", APIKey: NewAPIKey(secret)})
 	if err := c.Save(); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -354,7 +356,7 @@ func TestSaveNullAPIKey(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	c.AddModelProvider(ModelProvider{
-		Type:    ModelProviderTypeOpenAICompatible,
+		APIType: ModelProviderTypeOpenAI,
 		Name:    "Mine",
 		BaseURL: "http://x/v1",
 	})
@@ -411,5 +413,69 @@ func TestLoadUpgradesLegacyPlaintextAPIKey(t *testing.T) {
 	}
 	if bytes.Contains(data, []byte(legacy)) {
 		t.Error("config file still contains the plain API key after save")
+	}
+}
+
+// TestLoadMigratesExecutionShape checks that a config file written with the
+// older execution/listing provider shape is migrated onto the current
+// API type / base URL / API key fields.
+func TestLoadMigratesExecutionShape(t *testing.T) {
+	home := withHome(t)
+	dir := filepath.Join(home, ".guac")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	raw := `{
+		"modelProviders": [
+			{
+				"name": "nVidia",
+				"executionType": "nVidia",
+				"executionBaseUrl": "https://integrate.api.nvidia.com/v1",
+				"executionApiKey": "nv-key",
+				"listingType": "nVidia",
+				"listingBaseUrl": "https://integrate.api.nvidia.com/v1",
+				"models": ["meta/llama-3.1-8b-instruct"]
+			},
+			{
+				"name": "OpenCode",
+				"executionType": "OpenCode",
+				"executionBaseUrl": "https://opencode.ai/v1",
+				"listingType": "OpenCode",
+				"listingBaseUrl": "https://opencode.ai"
+			}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, configFileName), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	nv, ok := c.GetModelProvider(0)
+	if !ok {
+		t.Fatal("nVidia provider missing after migration")
+	}
+	if nv.APIType != ModelProviderTypeOpenAI {
+		t.Errorf("nVidia APIType = %q, want %q", nv.APIType, ModelProviderTypeOpenAI)
+	}
+	if nv.BaseURL != "https://integrate.api.nvidia.com/v1" {
+		t.Errorf("nVidia BaseURL = %q, want the migrated execution base URL", nv.BaseURL)
+	}
+	if got := nv.APIKey.String(); got != "nv-key" {
+		t.Errorf("nVidia APIKey = %q, want %q", got, "nv-key")
+	}
+	if len(nv.Models) != 1 || nv.Models[0] != "meta/llama-3.1-8b-instruct" {
+		t.Errorf("nVidia Models = %v, want the migrated list", nv.Models)
+	}
+
+	oc, ok := c.GetModelProvider(1)
+	if !ok {
+		t.Fatal("OpenCode provider missing after migration")
+	}
+	if oc.APIType != ModelProviderTypeOpenCode {
+		t.Errorf("OpenCode APIType = %q, want %q", oc.APIType, ModelProviderTypeOpenCode)
 	}
 }

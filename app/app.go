@@ -83,10 +83,52 @@ func (g *Guac) Run() {
 // reloadModels rebuilds the available model list from the configured providers
 // in the guac config. The "Provider / Model" dropdown is sourced solely from
 // these configured providers.
+//
+// It also refreshes the dropdown in every open session, so a provider or model
+// added in Preferences appears immediately without restarting the app.
 func (g *Guac) reloadModels() {
 	if g.config != nil {
 		g.models = config.AllModelOptionsFromProviders(g.config)
 	}
+	g.refreshModelSelectors()
+}
+
+// refreshModelSelectors updates every open session's "Provider / Model"
+// dropdown to match g.models. Each session keeps its current selection when
+// that model is still available; otherwise it falls back to the first model
+// (or clears the selection when no models are configured).
+func (g *Guac) refreshModelSelectors() {
+	labels := labelsForModels(g.models)
+	for _, st := range g.sessions {
+		if st.banner == nil || st.banner.modelSel == nil {
+			continue
+		}
+		sel := st.banner.modelSel
+		selected := sel.Selected
+		sel.Options = labels
+		if selected == "" || !containsLabel(labels, selected) {
+			selected = ""
+			if len(labels) > 0 {
+				selected = labels[0]
+			}
+		}
+		if selected == "" {
+			sel.ClearSelected()
+		} else {
+			sel.SetSelected(selected)
+		}
+		sel.Refresh()
+	}
+}
+
+// containsLabel reports whether labels contains want.
+func containsLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Guac) onModelChanged(st *sessionTab, label string) {

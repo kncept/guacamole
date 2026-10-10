@@ -13,8 +13,8 @@ import (
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/modelclient"
 	"github.com/kncept/guacamole/permissions"
-	"github.com/kncept/guacamole/restfulai"
 	"github.com/kncept/guacamole/roles/definitions"
 	"github.com/kncept/guacamole/tools"
 )
@@ -140,12 +140,14 @@ func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
 	return ts
 }
 
-// loopProvider builds the REST provider for the session's selected model.
+// loopProvider builds the provider for the session's selected model,
+// dispatching on the model's API type.
 func (st *sessionTab) loopProvider() ai.Provider {
 	opt := st.selectedModel()
-	provider, err := restfulai.NewRestfulAI(&config.ApiModelInterfaceDetails{
-		BaseUrl:   opt.ExecutionBaseURL,
-		ApiKey:    opt.ExecutionAPIKey,
+	provider, err := modelclient.New(&config.ApiModelInterfaceDetails{
+		APIType:   opt.ProviderType,
+		BaseUrl:   opt.BaseURL,
+		ApiKey:    opt.APIKey,
 		ModelName: opt.ModelID,
 	})
 	if err != nil {

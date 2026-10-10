@@ -10,7 +10,7 @@ func TestAllModelOptionsFromProvidersWithModels(t *testing.T) {
 		ModelProviders: []ModelProvider{
 			{
 				Name:    "OpenAI",
-				Type:    ModelProviderTypeOpenAI,
+				APIType: ModelProviderTypeOpenAI,
 				BaseURL: "https://api.openai.com/v1",
 				APIKey:  NewAPIKey("k"),
 				Models:  []string{"gpt-4o", "gpt-4o-mini"},
@@ -40,7 +40,7 @@ func TestAllModelOptionsFromProvidersWithModels(t *testing.T) {
 func TestAllModelOptionsFromProviderWithoutModels(t *testing.T) {
 	gcfg := &GConfig{
 		ModelProviders: []ModelProvider{
-			{Name: "nVidia", Type: ModelProviderTypeNvidia, BaseURL: "https://integrate.api.nvidia.com/v1", APIKey: NewAPIKey("nv")},
+			{Name: "nVidia", APIType: ModelProviderTypeOpenAI, BaseURL: "https://integrate.api.nvidia.com/v1", APIKey: NewAPIKey("nv")},
 		},
 	}
 
