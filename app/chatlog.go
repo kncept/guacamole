@@ -46,6 +46,7 @@ func (c *chat) addUserMessage(text string) *widget.ProgressBarInfinite {
 	c.log.Add(bubble)
 	// Add spinner as a separate entry at the bottom
 	c.log.Add(spinner)
+	c.activeSpinner = spinner
 	c.scrollLog()
 	spinner.Show()
 	spinner.Start()
@@ -60,7 +61,21 @@ func (c *chat) removeSpinner(spinner *widget.ProgressBarInfinite) {
 	spinner.Stop()
 	spinner.Hide()
 	c.log.Remove(spinner)
+	if c.activeSpinner == spinner {
+		c.activeSpinner = nil
+	}
 	c.scrollLog()
+}
+
+// ensureSpinnerAtBottom moves the active spinner to the bottom of the log
+// if it exists. Call this after adding any new content to the log.
+func (c *chat) ensureSpinnerAtBottom() {
+	if c.activeSpinner != nil {
+		// Remove and re-add to move to bottom
+		c.log.Remove(c.activeSpinner)
+		c.log.Add(c.activeSpinner)
+		c.scrollLog()
+	}
 }
 
 // addAIMessage appends an empty AI bubble that grows as reply chunks arrive.
@@ -69,7 +84,7 @@ func (c *chat) removeSpinner(spinner *widget.ProgressBarInfinite) {
 func (c *chat) addAIMessage() *widget.Label {
 	bubble, label := newBubble("", false)
 	c.log.Add(bubble)
-	c.scrollLog()
+	c.ensureSpinnerAtBottom()
 	return label
 }
 
@@ -82,7 +97,7 @@ func (c *chat) addToolCall(summary string) *widget.Label {
 	label.Wrapping = fyne.TextWrapWord
 	label.Importance = widget.LowImportance
 	c.log.Add(label)
-	c.scrollLog()
+	c.ensureSpinnerAtBottom()
 	return label
 }
 
@@ -103,7 +118,7 @@ func (c *chat) addErrorMessage(err error) {
 	label.Wrapping = fyne.TextWrapWord
 	label.Importance = widget.DangerImportance
 	c.log.Add(label)
-	c.scrollLog()
+	c.ensureSpinnerAtBottom()
 }
 
 // scrollLog keeps the newest message in view.

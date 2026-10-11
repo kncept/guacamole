@@ -15,11 +15,12 @@ import (
 
 // chat represents a single chat session with its own output log and input field.
 type chat struct {
-	id        string
-	log       *fyne.Container // VBox of message bubbles, newest at the bottom
-	logScroll *container.Scroll
-	input     *widget.Entry
-	session   *ai.Session
+	id            string
+	log           *fyne.Container // VBox of message bubbles, newest at the bottom
+	logScroll     *container.Scroll
+	input         *widget.Entry
+	session       *ai.Session
+	activeSpinner *widget.ProgressBarInfinite // spinner shown while a request is in flight
 }
 
 // Guac holds the state and references for the Guacamole GUI application.
