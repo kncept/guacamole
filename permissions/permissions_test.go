@@ -494,6 +494,70 @@ func TestFilesystemParentResponseAvoidsPrompt(t *testing.T) {
 	}
 }
 
+// TestFilesystemGrandparentResponseAvoidsPrompt checks that an ancestor two
+// or more levels up that answered an access kind is enough: anything below
+// it inherits that answer without asking again, however deep the path.
+func TestFilesystemGrandparentResponseAvoidsPrompt(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "a", "b", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
+		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
+			{Directory: dir, Read: config.PolicyAllow, Write: config.PolicyAllow},
+		}
+	})
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+		t.Error("read allowed = false, want true (inherited ancestor allow)")
+	}
+	if allowed, _ := m.IsAllowedPath(file, AccessWrite); !allowed {
+		t.Error("write allowed = false, want true (inherited ancestor allow)")
+	}
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions (ancestor already answered)", input.asks)
+	}
+}
+
+// TestFilesystemChildDirectoryOverridesAnsweredKindOnly checks that a child
+// directory rule overrides its parent for the access kind it answered, while
+// the other kind still inherits the parent's response — no prompts either way.
+func TestFilesystemChildDirectoryOverridesAnsweredKindOnly(t *testing.T) {
+	root := t.TempDir()
+	secret := filepath.Join(root, "secret")
+	file := filepath.Join(secret, "keys.pem")
+	if err := os.MkdirAll(secret, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
+		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
+			{Directory: root, Read: config.PolicyAllow, Write: config.PolicyAllow},
+			{Directory: secret, Write: config.PolicyDeny},
+		}
+	})
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+		t.Error("read allowed = false, want true (child did not answer read; parent allow applies)")
+	}
+	if allowed, _ := m.IsAllowedPath(file, AccessWrite); allowed {
+		t.Error("write allowed = true, want false (child directory deny overrides parent allow)")
+	}
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions (both kinds resolved from rules)", input.asks)
+	}
+}
+
 // TestFilesystemChildOverridesParent checks that a more specific rule wins
 // for the access kind it answered, while the other kind still inherits from
 // the parent.
