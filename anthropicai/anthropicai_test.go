@@ -3,10 +3,12 @@ package anthropicai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
@@ -209,6 +211,51 @@ data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text
 	})
 	if err != want {
 		t.Errorf("SendStream error = %v, want the onChunk error %v", err, want)
+	}
+}
+
+// TestSendRateLimited checks that an HTTP 429 reply becomes an
+// ai.RateLimitError carrying the Retry-After wait.
+func TestSendRateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "42")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"rate_limit_error","message":"slow down"}}`))
+	}))
+	defer srv.Close()
+
+	p, err := NewAnthropicAI(&config.ApiModelInterfaceDetails{BaseUrl: srv.URL, ApiKey: "k", ModelName: "claude"})
+	if err != nil {
+		t.Fatalf("NewAnthropicAI: %v", err)
+	}
+
+	_, err = p.Send(context.Background(), ai.Request{Prompt: "hi"})
+	var rateLimited *ai.RateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("Send error = %v, want a *ai.RateLimitError", err)
+	}
+	if rateLimited.RetryAfter != 42*time.Second {
+		t.Errorf("RetryAfter = %v, want 42s", rateLimited.RetryAfter)
+	}
+}
+
+// TestSendStreamRateLimited checks the streaming path reports 429s the same
+// way as a non-streaming send.
+func TestSendStreamRateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "7")
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	p, _ := NewAnthropicAI(&config.ApiModelInterfaceDetails{BaseUrl: srv.URL, ApiKey: "k", ModelName: "claude"})
+	_, err := p.SendStream(context.Background(), ai.Request{Prompt: "hi"}, nil)
+	var rateLimited *ai.RateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("SendStream error = %v, want a *ai.RateLimitError", err)
+	}
+	if rateLimited.RetryAfter != 7*time.Second {
+		t.Errorf("RetryAfter = %v, want 7s", rateLimited.RetryAfter)
 	}
 }
 

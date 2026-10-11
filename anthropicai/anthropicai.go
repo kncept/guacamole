@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -72,6 +73,22 @@ func (a *anthropicAI) setHeaders(req *http.Request) {
 		req.Header.Set("x-api-key", a.apiKey)
 	}
 	req.Header.Set("anthropic-version", anthropicVersion)
+}
+
+// retryAfter parses the Retry-After header: an integer number of seconds or
+// an HTTP-date. Returns 0 when absent or unparseable.
+func retryAfter(h http.Header) time.Duration {
+	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return time.Duration(n) * time.Second
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			if d := time.Until(t); d > 0 {
+				return d
+			}
+		}
+	}
+	return 0
 }
 
 // apiRequest is the Messages API request body.
@@ -239,8 +256,12 @@ func (a *anthropicAI) do(ctx context.Context, body []byte) (*apiResponse, error)
 		return nil, fmt.Errorf("anthropicai: read response: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("anthropicai: POST %s/messages: status %d: %s",
+		err := fmt.Errorf("anthropicai: POST %s/messages: status %d: %s",
 			a.baseURL, resp.StatusCode, strings.TrimSpace(string(data)))
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return nil, &ai.RateLimitError{Err: err, RetryAfter: retryAfter(resp.Header)}
+		}
+		return nil, err
 	}
 
 	var raw apiResponse
@@ -313,8 +334,12 @@ func (a *anthropicAI) SendStream(ctx context.Context, req ai.Request, onChunk fu
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		data, _ := io.ReadAll(resp.Body)
-		return ai.Response{}, fmt.Errorf("anthropicai: POST %s/messages (stream): status %d: %s",
+		err := fmt.Errorf("anthropicai: POST %s/messages (stream): status %d: %s",
 			a.baseURL, resp.StatusCode, strings.TrimSpace(string(data)))
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return ai.Response{}, &ai.RateLimitError{Err: err, RetryAfter: retryAfter(resp.Header)}
+		}
+		return ai.Response{}, err
 	}
 
 	return a.consumeStream(resp.Body, onChunk)

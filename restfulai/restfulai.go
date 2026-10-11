@@ -5,11 +5,14 @@ package restfulai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
@@ -71,12 +74,46 @@ func apiKeyStatus(key string) string {
 	return "set"
 }
 
+// wrapErr attaches the request context to a provider error and marks HTTP
+// 429 responses as a rate limit (with the provider's recommended wait, when
+// it sent one) so the session can offer the user a retry decision. kind
+// names the request stage, e.g. "" for a plain send and " (stream)" for a
+// stream, matching the existing error messages.
+func (this *restfulAI) wrapErr(kind string, err error) error {
+	wrapped := fmt.Errorf("restfulai: POST %s/responses%s: %w", this.baseURL, kind, err)
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusTooManyRequests {
+		var retry time.Duration
+		if apiErr.Response != nil {
+			retry = retryAfter(apiErr.Response.Header)
+		}
+		return &ai.RateLimitError{Err: wrapped, RetryAfter: retry}
+	}
+	return wrapped
+}
+
+// retryAfter parses the Retry-After header: an integer number of seconds or
+// an HTTP-date. Returns 0 when absent or unparseable.
+func retryAfter(h http.Header) time.Duration {
+	if v := strings.TrimSpace(h.Get("Retry-After")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			return time.Duration(n) * time.Second
+		}
+		if t, err := http.ParseTime(v); err == nil {
+			if d := time.Until(t); d > 0 {
+				return d
+			}
+		}
+	}
+	return 0
+}
+
 // Send performs one non-streaming exchange.
 func (this *restfulAI) Send(ctx context.Context, req ai.Request) (ai.Response, error) {
 	this.logRequest("send", req)
 	raw, err := this.client.Responses.New(ctx, this.params(req))
 	if err != nil {
-		return ai.Response{}, fmt.Errorf("restfulai: POST %s/responses: %w", this.baseURL, err)
+		return ai.Response{}, this.wrapErr("", err)
 	}
 	log.Printf("restfulai: response ok: %d input, %d output tokens",
 		raw.Usage.InputTokens, raw.Usage.OutputTokens)
@@ -115,7 +152,7 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 		}
 	}
 	if err := stream.Err(); err != nil {
-		return ai.Response{}, fmt.Errorf("restfulai: POST %s/responses (stream): %w", this.baseURL, err)
+		return ai.Response{}, this.wrapErr(" (stream)", err)
 	}
 
 	log.Printf("restfulai: stream done: %d chars, complete=%v", len(text), finished)

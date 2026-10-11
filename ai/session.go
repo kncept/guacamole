@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -99,6 +100,12 @@ func newSessionID() string {
 // rounds. When that limit is hit, UserInput (if set) lets the user decide
 // whether to keep going or stop; without it Say aborts with an error.
 //
+// When the provider rate limits the request (HTTP 429), UserInput (if set)
+// is asked whether to retry; a retry runs the request again with a fresh
+// retry budget, in the same way a "Continue" answer resets the tool-round
+// count. Without a UserInput, or if the user aborts, the rate-limit error
+// is returned.
+//
 // If a run fails, the history keeps everything up to the last successful
 // round, so a failed turn can be retried (or abandoned) without corrupting
 // the conversation.
@@ -113,7 +120,7 @@ func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 	}
 
 	for round := 0; ; round++ {
-		resp, err := this.Loop.Run(ctx, Request{
+		resp, err := this.run(ctx, Request{
 			Model:        this.Model,
 			Messages:     history,
 			SystemPrompt: this.SystemPrompt,
@@ -159,6 +166,40 @@ func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 			history = append(history, this.execute(ctx, call))
 		}
 		this.messages = history
+	}
+}
+
+// run sends one request through the loop. If the provider rate limits the
+// request (HTTP 429) and a UserInput is configured, the user is asked
+// whether to retry: "Retry" sends the request again with a fresh retry
+// budget (the loop's own retries were already spent), "Abort" (or a nil
+// UserInput, or a failed prompt) returns the rate-limit error.
+func (this *Session) run(ctx context.Context, req Request) (Response, error) {
+	for {
+		resp, err := this.Loop.Run(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		var rateLimited *RateLimitError
+		if !errors.As(err, &rateLimited) || this.UserInput == nil {
+			return resp, err
+		}
+
+		text := "The request was rate limited (HTTP 429). Retry?"
+		if rateLimited.RetryAfter > 0 {
+			text = fmt.Sprintf("The request was rate limited (HTTP 429). Wait %s, then retry?", rateLimited.RetryAfter)
+		}
+		answer, perr := this.UserInput.Prompt(text, false, []string{"Retry", "Abort"})
+		if perr != nil || answer != "Retry" {
+			return resp, err
+		}
+		if rateLimited.RetryAfter > 0 {
+			select {
+			case <-ctx.Done():
+				return resp, ctx.Err()
+			case <-time.After(rateLimited.RetryAfter):
+			}
+		}
 	}
 }
 

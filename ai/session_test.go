@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/kncept/guacamole/userinput"
 )
@@ -381,6 +383,95 @@ func TestSessionToolRoundLimitAbortAfterResume(t *testing.T) {
 	// limit aborted: user + 5 tool calls + 4 results + the 6th call.
 	if got := len(session.Messages()); got != 12 {
 		t.Errorf("len(Messages()) = %d, want 12", got)
+	}
+}
+
+// rateLimitProvider serves a RateLimitError for the first n Send calls,
+// then a normal reply.
+type rateLimitProvider struct {
+	fail       int
+	retryAfter time.Duration
+}
+
+func (r *rateLimitProvider) Send(ctx context.Context, req Request) (Response, error) {
+	if r.fail > 0 {
+		r.fail--
+		return Response{}, &RateLimitError{Err: errors.New("HTTP 429"), RetryAfter: r.retryAfter}
+	}
+	return Response{Text: "done", Finished: true}, nil
+}
+
+func (r *rateLimitProvider) SendStream(ctx context.Context, req Request, onChunk func(Chunk) error) (Response, error) {
+	resp, err := r.Send(ctx, req)
+	if err != nil {
+		return Response{}, err
+	}
+	if onChunk != nil && resp.Text != "" {
+		if err := onChunk(Chunk{Delta: resp.Text, Finished: true}); err != nil {
+			return Response{}, err
+		}
+	}
+	return resp, nil
+}
+
+func TestSessionRateLimitRetryByUser(t *testing.T) {
+	// The loop's own retry budget is spent: a single 429 escapes Run, and
+	// the session hands the decision to the user.
+	provider := &rateLimitProvider{fail: 1, retryAfter: time.Millisecond}
+	loop := NewLoop(provider)
+	loop.Retries = 0
+	session := NewSession(loop)
+	input := &scriptedInput{answers: []string{"Retry"}}
+	session.UserInput = input
+
+	resp, err := session.Say(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Say: %v", err)
+	}
+	if resp.Text != "done" {
+		t.Errorf("Text = %q, want %q", resp.Text, "done")
+	}
+	if len(input.prompts) != 1 {
+		t.Fatalf("user was prompted %d times, want 1", len(input.prompts))
+	}
+	if want := []string{"Retry", "Abort"}; !reflect.DeepEqual(input.options[0], want) {
+		t.Errorf("options = %v, want %v", input.options[0], want)
+	}
+	if !strings.Contains(input.prompts[0], "rate limited (HTTP 429)") {
+		t.Errorf("prompt = %q, want a rate limit question", input.prompts[0])
+	}
+}
+
+func TestSessionRateLimitAbortByUser(t *testing.T) {
+	provider := &rateLimitProvider{fail: 10, retryAfter: time.Millisecond}
+	loop := NewLoop(provider)
+	loop.Retries = 0
+	session := NewSession(loop)
+	input := &scriptedInput{answers: []string{"Abort"}}
+	session.UserInput = input
+
+	if _, err := session.Say(context.Background(), "go"); err == nil {
+		t.Fatal("Say: expected a rate limit error, got nil")
+	}
+	if len(input.prompts) != 1 {
+		t.Fatalf("user was prompted %d times, want 1", len(input.prompts))
+	}
+	// The aborted turn left no trace in the conversation.
+	if got := session.Messages(); len(got) != 0 {
+		t.Errorf("Messages() = %v, want empty", got)
+	}
+}
+
+func TestSessionRateLimitWithoutInputStops(t *testing.T) {
+	provider := &rateLimitProvider{fail: 10, retryAfter: time.Millisecond}
+	loop := NewLoop(provider)
+	loop.Retries = 0
+	session := NewSession(loop)
+
+	_, err := session.Say(context.Background(), "go")
+	var rateLimited *RateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("Say error = %v, want a RateLimitError to pass through", err)
 	}
 }
 

@@ -1,12 +1,17 @@
 package restfulai
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
+	"github.com/openai/openai-go/v3"
+	openaiOption "github.com/openai/openai-go/v3/option"
 )
 
 func testProvider() *restfulAI {
@@ -120,6 +125,35 @@ func TestListModelsOpenCodeStandardShape(t *testing.T) {
 	}
 	if infos[1].ID != "ling-3.1-flash-free" || !infos[1].IsFree {
 		t.Errorf("infos[1] = %+v, want ling-3.1-flash-free marked free", infos[1])
+	}
+}
+
+// TestSendRateLimited checks that an HTTP 429 reply becomes an
+// ai.RateLimitError carrying the Retry-After wait.
+func TestSendRateLimited(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "30")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":"rate_limit_exceeded","message":"slow down","param":"","type":"rate_limit_error"}}`))
+	}))
+	defer srv.Close()
+
+	// Disable the client's own retries so one 429 reaches wrapErr directly.
+	client := openai.NewClient(
+		openaiOption.WithBaseURL(srv.URL),
+		openaiOption.WithAPIKey("k"),
+		openaiOption.WithMaxRetries(0),
+	)
+	p := &restfulAI{client: &client, baseURL: srv.URL, model: "m1"}
+
+	_, err := p.Send(context.Background(), ai.Request{Prompt: "hi"})
+	var rateLimited *ai.RateLimitError
+	if !errors.As(err, &rateLimited) {
+		t.Fatalf("Send error = %v, want a *ai.RateLimitError", err)
+	}
+	if rateLimited.RetryAfter != 30*time.Second {
+		t.Errorf("RetryAfter = %v, want 30s", rateLimited.RetryAfter)
 	}
 }
 

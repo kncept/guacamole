@@ -30,6 +30,26 @@ func (e *StreamAbortedError) Error() string {
 
 func (e *StreamAbortedError) Unwrap() error { return e.Err }
 
+// RateLimitError reports that the provider rejected the request with an
+// HTTP 429 (Too Many Requests). Providers wrap their error with it so the
+// session can recognise a rate limit and offer the user a retry decision.
+type RateLimitError struct {
+	// Err is the underlying provider error.
+	Err error
+	// RetryAfter is the wait the provider asked for before another attempt,
+	// taken from the Retry-After header. 0 means none was given.
+	RetryAfter time.Duration
+}
+
+func (e *RateLimitError) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("ai: rate limited (retry after %s): %v", e.RetryAfter, e.Err)
+	}
+	return fmt.Sprintf("ai: rate limited: %v", e.Err)
+}
+
+func (e *RateLimitError) Unwrap() error { return e.Err }
+
 // Loop is the request/processing/response cycle.
 //
 // Run sends the request to the Provider, hands the result to the Processor,
