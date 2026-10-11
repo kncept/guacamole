@@ -24,13 +24,14 @@ func New(conf *config.ApiModelInterfaceDetails) (ai.Provider, error) {
 // ListModels fetches the models a provider offers, dispatching on its API
 // type. OpenCode uses its own listing response; Anthropic uses the Anthropic
 // Models API; everything else uses the standard OpenAI /v1/models endpoint.
-func ListModels(apiType config.ModelProviderType, baseURL, apiKey string) ([]restfulai.ModelInfo, error) {
+// appAttribution is only honored by the OpenAI-compatible path (OpenRouter).
+func ListModels(apiType config.ModelProviderType, baseURL, apiKey string, appAttribution bool) ([]restfulai.ModelInfo, error) {
 	switch apiType {
 	case config.ModelProviderTypeOpenCode:
 		return restfulai.ListModelsOpenCode(baseURL, apiKey)
 	case config.ModelProviderTypeAnthropic:
 		return anthropicai.ListModelsAnthropic(baseURL, apiKey)
 	default:
-		return restfulai.ListModelsWithInfo(baseURL, apiKey)
+		return restfulai.ListModelsWithInfo(baseURL, apiKey, appAttribution)
 	}
 }

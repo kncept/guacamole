@@ -299,11 +299,12 @@ func (p *preferencesScreen) showEditProvider(idx int) {
 // every field editable.
 func (p *preferencesScreen) showProviderEditor(idx int) {
 	var (
-		nameEntry     *widget.Entry
-		baseURLEntry  *widget.Entry
-		apiKeyEntry   *widget.Entry
-		apiTypeSelect *widget.Select
-		presetSelect  *widget.Select
+		nameEntry        *widget.Entry
+		baseURLEntry     *widget.Entry
+		apiKeyEntry      *widget.Entry
+		apiTypeSelect    *widget.Select
+		presetSelect     *widget.Select
+		attributionCheck *widget.Check
 	)
 
 	// goBack returns to the Preferences screen (the Providers section is the
@@ -349,6 +350,10 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 	nameEntry = widget.NewEntry()
 	nameEntry.SetPlaceHolder("Provider name")
 
+	// Opt-in app attribution headers (OpenRouter). Off by default; harmless
+	// when the provider does not recognize them.
+	attributionCheck = widget.NewCheck("Send app attribution headers (HTTP-Referer, X-OpenRouter-Title, X-OpenRouter-Categories)", nil)
+
 	if idx >= 0 && p.guac.config != nil {
 		if prov, ok := p.guac.config.GetModelProvider(idx); ok {
 			// Pick the preset whose fixed details match the stored provider.
@@ -364,6 +369,7 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 			nameEntry.SetText(prov.Name)
 			baseURLEntry.SetText(prov.BaseURL)
 			apiKeyEntry.SetText(prov.APIKey.String())
+			attributionCheck.SetChecked(prov.AppAttribution)
 			if preset == config.ProviderPresetCustom {
 				apiTypeSelect.Options = ensureType(apiTypeNames(), string(prov.APIType))
 				apiTypeSelect.SetSelected(string(prov.APIType))
@@ -382,17 +388,19 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 		var provider config.ModelProvider
 		if d, ok := preset.Details(); ok {
 			provider = config.ModelProvider{
-				Name:    nameEntry.Text,
-				APIType: d.APIType,
-				BaseURL: d.BaseURL,
-				APIKey:  config.NewAPIKey(apiKeyEntry.Text),
+				Name:           nameEntry.Text,
+				APIType:        d.APIType,
+				BaseURL:        d.BaseURL,
+				APIKey:         config.NewAPIKey(apiKeyEntry.Text),
+				AppAttribution: attributionCheck.Checked,
 			}
 		} else {
 			provider = config.ModelProvider{
-				Name:    nameEntry.Text,
-				APIType: config.ModelProviderType(apiTypeSelect.Selected),
-				BaseURL: baseURLEntry.Text,
-				APIKey:  config.NewAPIKey(apiKeyEntry.Text),
+				Name:           nameEntry.Text,
+				APIType:        config.ModelProviderType(apiTypeSelect.Selected),
+				BaseURL:        baseURLEntry.Text,
+				APIKey:         config.NewAPIKey(apiKeyEntry.Text),
+				AppAttribution: attributionCheck.Checked,
 			}
 		}
 
@@ -423,6 +431,7 @@ func (p *preferencesScreen) showProviderEditor(idx int) {
 		{Text: "Base URL", Widget: baseURLEntry},
 		{Text: "API Type", Widget: apiTypeSelect},
 		{Text: "API Key", Widget: apiKeyEntry},
+		{Text: "Attribution", Widget: attributionCheck},
 	}}
 	p.guac.w.SetContent(container.NewBorder(header, nil, nil, nil,
 		container.NewVScroll(form)))
@@ -538,7 +547,7 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 	// fetchAndPopulate lists the provider's models and repopulates the rows. It
 	// runs the network call off the UI thread and applies the result on it.
 	fetchAndPopulate := func() {
-		infos, err := modelclient.ListModels(prov.APIType, prov.BaseURL, prov.APIKey.String())
+		infos, err := modelclient.ListModels(prov.APIType, prov.BaseURL, prov.APIKey.String(), prov.AppAttribution)
 		if err != nil {
 			fyne.Do(func() { dialog.ShowError(err, p.guac.w) })
 			return

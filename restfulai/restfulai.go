@@ -27,9 +27,10 @@ type RestfulAI interface {
 }
 
 type restfulAI struct {
-	client  *openai.Client
-	baseURL string
-	model   string
+	client         *openai.Client
+	baseURL        string
+	model          string
+	appAttribution bool
 }
 
 // NewRestfulAI builds a Provider from API connection details. It fails fast
@@ -41,18 +42,35 @@ func NewRestfulAI(conf *config.ApiModelInterfaceDetails) (RestfulAI, error) {
 		return nil, fmt.Errorf("restfulai: no base URL for model %q; set base URL in provider configuration", conf.ModelName)
 	}
 
-	client := openai.NewClient(
+	opts := []openaiOption.RequestOption{
 		openaiOption.WithBaseURL(conf.BaseUrl),
 		openaiOption.WithAPIKey(conf.ApiKey), // defaults to os.LookupEnv("OPENAI_API_KEY")
-	)
-	this := &restfulAI{
-		client:  &client,
-		baseURL: conf.BaseUrl,
-		model:   conf.ModelName,
 	}
-	log.Printf("restfulai: ready: base URL %s, model %s, api key %s",
-		conf.BaseUrl, conf.ModelName, apiKeyStatus(conf.ApiKey))
+	opts = append(opts, attributionOptions(conf.AppAttribution)...)
+	client := openai.NewClient(opts...)
+	this := &restfulAI{
+		client:         &client,
+		baseURL:        conf.BaseUrl,
+		model:          conf.ModelName,
+		appAttribution: conf.AppAttribution,
+	}
+	log.Printf("restfulai: ready: base URL %s, model %s, api key %s, app attribution %v",
+		conf.BaseUrl, conf.ModelName, apiKeyStatus(conf.ApiKey), conf.AppAttribution)
 	return this, nil
+}
+
+// attributionOptions returns the request options that add app attribution
+// headers when enabled, and nothing when disabled.
+func attributionOptions(enabled bool) []openaiOption.RequestOption {
+	headers := config.AppAttributionHeaders(enabled)
+	if len(headers) == 0 {
+		return nil
+	}
+	opts := make([]openaiOption.RequestOption, 0, len(headers))
+	for k, v := range headers {
+		opts = append(opts, openaiOption.WithHeader(k, v))
+	}
+	return opts
 }
 
 // logRequest records what is about to be sent, so a failure can be traced
@@ -176,8 +194,9 @@ func (this *restfulAI) SendStream(ctx context.Context, req ai.Request, onChunk f
 
 // ListModels fetches available model IDs from an OpenAI-compatible endpoint
 // at baseURL using apiKey for authentication (falls back to
-// $OPENAI_API_KEY when empty).
-func ListModels(baseURL, apiKey string) ([]string, error) {
+// $OPENAI_API_KEY when empty). When appAttribution is set, app attribution
+// headers are sent with the request.
+func ListModels(baseURL, apiKey string, appAttribution bool) ([]string, error) {
 	if baseURL == "" {
 		return nil, fmt.Errorf("restfulai: no base URL to list models")
 	}
@@ -188,6 +207,7 @@ func ListModels(baseURL, apiKey string) ([]string, error) {
 	if apiKey != "" {
 		opts = append(opts, openaiOption.WithAPIKey(apiKey))
 	}
+	opts = append(opts, attributionOptions(appAttribution)...)
 
 	client := openai.NewClient(opts...)
 	var models []string
@@ -215,9 +235,10 @@ type ModelInfo struct {
 // ListModelsWithInfo fetches available models with additional metadata from
 // an OpenAI-compatible endpoint at baseURL using apiKey for authentication.
 // This is a generic implementation that only returns model IDs; specific
-// providers may override this with richer data.
-func ListModelsWithInfo(baseURL, apiKey string) ([]ModelInfo, error) {
-	ids, err := ListModels(baseURL, apiKey)
+// providers may override this with richer data. When appAttribution is set,
+// app attribution headers are sent with the request.
+func ListModelsWithInfo(baseURL, apiKey string, appAttribution bool) ([]ModelInfo, error) {
+	ids, err := ListModels(baseURL, apiKey, appAttribution)
 	if err != nil {
 		return nil, err
 	}

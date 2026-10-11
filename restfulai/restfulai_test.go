@@ -157,6 +157,39 @@ func TestSendRateLimited(t *testing.T) {
 	}
 }
 
+// TestListModelsAppAttribution checks that app attribution headers are sent
+// when enabled, and that only the standard headers are sent when disabled.
+func TestListModelsAppAttribution(t *testing.T) {
+	var got http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"list","data":[]}`))
+	}))
+	defer srv.Close()
+
+	if _, err := ListModels(srv.URL, "k", true); err != nil {
+		t.Fatalf("ListModels (enabled): %v", err)
+	}
+	if v := got.Get("HTTP-Referer"); v != config.AppAttributionReferer {
+		t.Errorf("HTTP-Referer = %q, want %q", v, config.AppAttributionReferer)
+	}
+	if v := got.Get("X-OpenRouter-Title"); v != config.AppAttributionTitle {
+		t.Errorf("X-OpenRouter-Title = %q, want %q", v, config.AppAttributionTitle)
+	}
+	if v := got.Get("X-OpenRouter-Categories"); v != config.AppAttributionCategories {
+		t.Errorf("X-OpenRouter-Categories = %q, want %q", v, config.AppAttributionCategories)
+	}
+
+	got = nil
+	if _, err := ListModels(srv.URL, "k", false); err != nil {
+		t.Fatalf("ListModels (disabled): %v", err)
+	}
+	if v := got.Get("X-OpenRouter-Title"); v != "" {
+		t.Errorf("X-OpenRouter-Title = %q, want no attribution header when disabled", v)
+	}
+}
+
 // TestListModelsOpenCodeLegacyShape checks the legacy {"models":[...]} shape
 // is still accepted for older OpenCode deployments.
 func TestListModelsOpenCodeLegacyShape(t *testing.T) {

@@ -209,6 +209,11 @@ type ModelProvider struct {
 	APIKey encryption.ObfuscatedValue `json:"apiKey"`
 	// Models is the list of available model names.
 	Models []string `json:"models,omitempty"`
+	// AppAttribution, when set, sends OpenRouter's app attribution headers
+	// (HTTP-Referer, X-OpenRouter-Title, X-OpenRouter-Categories) with every
+	// request to this provider. It is opt-in and ignored by providers that do
+	// not recognize the headers. See AppAttributionHeaders.
+	AppAttribution bool `json:"appAttribution,omitempty"`
 }
 
 // legacyModelProvider is the on-disk shape written by earlier versions. It is
@@ -220,6 +225,9 @@ type legacyModelProvider struct {
 	BaseURL string                     `json:"baseUrl"`
 	APIKey  encryption.ObfuscatedValue `json:"apiKey"`
 	Models  []string                   `json:"models,omitempty"`
+
+	// AppAttribution carries the current opt-in attribution flag.
+	AppAttribution bool `json:"appAttribution,omitempty"`
 
 	// "execution / listing" shape.
 	ExecutionType    ModelProviderType          `json:"executionType"`
@@ -247,6 +255,7 @@ func (p *ModelProvider) UnmarshalJSON(data []byte) error {
 	p.BaseURL = raw.BaseURL
 	p.APIKey = raw.APIKey
 	p.Models = raw.Models
+	p.AppAttribution = raw.AppAttribution
 
 	// Migrate the "execution / listing" shape.
 	if p.APIType == "" && raw.ExecutionType != "" {

@@ -148,10 +148,11 @@ func (st *sessionTab) tracedTools(ts []ai.Tool) []ai.Tool {
 func (st *sessionTab) loopProvider() ai.Provider {
 	opt := st.selectedModel()
 	provider, err := modelclient.New(&config.ApiModelInterfaceDetails{
-		APIType:   opt.ProviderType,
-		BaseUrl:   opt.BaseURL,
-		ApiKey:    opt.APIKey,
-		ModelName: opt.ModelID,
+		APIType:        opt.ProviderType,
+		BaseUrl:        opt.BaseURL,
+		ApiKey:         opt.APIKey,
+		ModelName:      opt.ModelID,
+		AppAttribution: opt.AppAttribution,
 	})
 	if err != nil {
 		// The GUI keeps running: prompts with this model surface the error

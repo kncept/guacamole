@@ -527,3 +527,54 @@ func TestSelectedModelRoundTrip(t *testing.T) {
 		t.Errorf("SelectedModel = %q, want %q", c2.SelectedModel, "OpenAI / gpt-4o-mini")
 	}
 }
+
+// TestAppAttributionRoundTrip checks that a provider's app attribution flag is
+// written to and read back from config.json.
+func TestAppAttributionRoundTrip(t *testing.T) {
+	withHome(t)
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c.AddModelProvider(ModelProvider{
+		APIType:        ModelProviderTypeOpenAI,
+		Name:           "openrouter",
+		BaseURL:        "https://openrouter.ai/api/v1",
+		APIKey:         NewAPIKey("k"),
+		Models:         []string{"openrouter/auto"},
+		AppAttribution: true,
+	})
+	if err := c.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	c2, err := Load()
+	if err != nil {
+		t.Fatalf("Load (second): %v", err)
+	}
+	p, ok := c2.GetModelProvider(0)
+	if !ok {
+		t.Fatal("provider missing after reload")
+	}
+	if !p.AppAttribution {
+		t.Error("AppAttribution = false, want true after reload")
+	}
+}
+
+// TestAppAttributionHeaders checks the header set is empty when disabled and
+// carries the documented OpenRouter values when enabled.
+func TestAppAttributionHeaders(t *testing.T) {
+	if got := AppAttributionHeaders(false); got != nil {
+		t.Errorf("disabled headers = %v, want nil", got)
+	}
+	got := AppAttributionHeaders(true)
+	want := map[string]string{
+		"HTTP-Referer":            "https://guacamole.kncept.com",
+		"X-OpenRouter-Title":      "Guacamole",
+		"X-OpenRouter-Categories": "cli-agent,programming-app",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("headers = %v, want %v", got, want)
+	}
+}

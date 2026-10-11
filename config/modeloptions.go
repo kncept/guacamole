@@ -16,6 +16,8 @@ type ModelOption struct {
 	Size         string // e.g., "7B", "70B"
 	IsFree       bool   // whether the model is free
 	Description  string
+	// AppAttribution carries the provider's opt-in app attribution setting.
+	AppAttribution bool
 }
 
 // Label returns a human-readable identifier for the option: the model shown
@@ -39,13 +41,14 @@ func AllModelOptionsFromProviders(gcfg *GConfig) []ModelOption {
 	for _, p := range gcfg.ModelProviders {
 		for _, m := range p.Models {
 			opts = append(opts, ModelOption{
-				ProviderID:   p.Name,
-				Provider:     p.Name,
-				ModelID:      m,
-				ModelName:    m,
-				BaseURL:      p.BaseURL,
-				APIKey:       p.APIKey.String(),
-				ProviderType: p.APIType,
+				ProviderID:     p.Name,
+				Provider:       p.Name,
+				ModelID:        m,
+				ModelName:      m,
+				BaseURL:        p.BaseURL,
+				APIKey:         p.APIKey.String(),
+				ProviderType:   p.APIType,
+				AppAttribution: p.AppAttribution,
 			})
 		}
 	}

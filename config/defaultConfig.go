@@ -22,6 +22,9 @@ type ApiModelInterfaceDetails struct {
 	BaseUrl   string
 	ApiKey    string
 	ModelName string
+	// AppAttribution, when set, sends OpenRouter's app attribution headers
+	// with every request to this provider.
+	AppAttribution bool
 }
 
 // DefaultConfig resolves the AI backend guacamole should use from the
@@ -51,10 +54,11 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 		p := &gcfg.ModelProviders[i]
 		if len(p.Models) > 0 {
 			conf := &ApiModelInterfaceDetails{
-				APIType:   p.APIType,
-				BaseUrl:   p.BaseURL,
-				ApiKey:    p.APIKey.String(),
-				ModelName: p.Models[0],
+				APIType:        p.APIType,
+				BaseUrl:        p.BaseURL,
+				ApiKey:         p.APIKey.String(),
+				ModelName:      p.Models[0],
+				AppAttribution: p.AppAttribution,
 			}
 			fmt.Printf("config: using model %s via %s (api key: %s)\n",
 				conf.ModelName, conf.BaseUrl, apiKeyStatus(conf.ApiKey))
@@ -66,9 +70,10 @@ func DefaultConfig() (*ApiModelInterfaceDetails, error) {
 	}
 
 	conf := &ApiModelInterfaceDetails{
-		APIType: fallback.APIType,
-		BaseUrl: fallback.BaseURL,
-		ApiKey:  fallback.APIKey.String(),
+		APIType:        fallback.APIType,
+		BaseUrl:        fallback.BaseURL,
+		ApiKey:         fallback.APIKey.String(),
+		AppAttribution: fallback.AppAttribution,
 	}
 	fmt.Printf("config: using provider %s via %s (api key: %s)\n",
 		fallback.Name, conf.BaseUrl, apiKeyStatus(conf.ApiKey))
@@ -99,10 +104,11 @@ func selectedModelDetails(gcfg *GConfig) *ApiModelInterfaceDetails {
 				continue
 			}
 			return &ApiModelInterfaceDetails{
-				APIType:   p.APIType,
-				BaseUrl:   p.BaseURL,
-				ApiKey:    p.APIKey.String(),
-				ModelName: model,
+				APIType:        p.APIType,
+				BaseUrl:        p.BaseURL,
+				ApiKey:         p.APIKey.String(),
+				ModelName:      model,
+				AppAttribution: p.AppAttribution,
 			}
 		}
 	}
