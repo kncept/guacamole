@@ -59,11 +59,54 @@ resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history 
 ```
 
 Attributes on a session: `Model`, `SystemPrompt`, `Temperature`, `MaxTokens`,
-`Tools`, `MaxToolRounds` (default 10, but `NewSession` actually starts at 30).
+`Tools`, `MaxToolRounds` (default 10, but `NewSession` actually starts at 30),
+and `Magi` (see below).
 
 A `UserInput` (a `userinput.RequestForegroundUserInput`) decides what happens
 when a model keeps calling tools past `MaxToolRounds`, and offers a retry
 when the provider rate limits a request (HTTP 429).
+
+### Magi Mode
+
+`ai.Magi` is a panel of `ai.MagiMember`s that replaces the single-model turn
+with a two-phase one. Each member owns its own `ai.Loop` (and so its own
+model), and `Magi.Run` takes the same `ai.Request` a `Loop` would:
+
+1. **Inference** — every member's `Loop.Run` is called with the request in
+   parallel; each answers independently.
+2. **Voting** — once all answers are in, every member's `Loop.Run` is called
+   again in a single request carrying the *other* members' answers, and asked
+   to score each one out of 100.
+3. **Collation** — the scores are totaled per answer and the highest-scoring
+   answer is returned; ties keep the earlier member.
+
+Each phase runs its members concurrently through a small generic `runPhase`
+helper and waits for all of them, so votes never race ahead of the answers
+they judge. A judge's reply is parsed first as the JSON object the prompt asks
+for, falling back to scanning for a magi name followed by a number; a judge
+that returns no usable score simply contributes nothing to the totals.
+
+`ai.Session.Magi`, when set, switches a session into Magi Mode: `Say` runs the
+panel instead of the session's own `Loop`, and the winning response is then
+executed exactly like a normal reply — its text is emitted through the
+session's `Loop.OnChunk`/`OnResponse` hooks (so a UI needs no special case),
+its tool calls run, and the conversation loops on the tool output.
+
+```go
+magi := &ai.Magi{Members: []ai.MagiMember{
+	{Name: "Melchior", Loop: ai.NewLoop(providerA), Model: "gpt-4o"},
+	{Name: "Balthasar", Loop: ai.NewLoop(providerB), Model: "claude-3-5-sonnet"},
+	{Name: "Casper", Loop: ai.NewLoop(providerC), Model: "llama-3.1-70b"},
+}}
+session.Magi = magi // Say now runs the panel
+```
+
+The magi run non-streaming (`Loop.Stream = false`): each returns a whole
+response, and only the winner is surfaced to the UI, as a single chunk.
+`Magi.OnPhase`, when set, reports each phase with a short line (the GUI wires
+it to activity lines in the transcript). The panel is configured in
+Preferences → Magi and selected per session through the virtual **Magi** model
+at the top of the model list (see [GUI.md](GUI.md#magi)).
 
 ### Tool use
 

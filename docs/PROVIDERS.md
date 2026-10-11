@@ -55,7 +55,12 @@ Providers are stored under `modelProviders` in `~/.guac/config.json`:
       "appAttribution": true
     }
   ],
-  "selectedModel": "openrouter / openrouter/auto"
+  "selectedModel": "openrouter / openrouter/auto",
+  "magi": {
+    "melchior": "openrouter / openrouter/auto",
+    "balthasar": "openrouter / openrouter/flash",
+    "casper": "openrouter / openrouter/auto"
+  }
 }
 ```
 
@@ -65,7 +70,11 @@ Providers are stored under `modelProviders` in `~/.guac/config.json`:
   drives the session's **Provider / Model** dropdown.
 - `appAttribution` is the opt-in app attribution flag (see below).
 - `selectedModel` is the default model for new sessions — the GUI updates it
-  as you switch models.
+  as you switch models. It may be the virtual `Magi` model, which switches new
+  sessions into Magi Mode.
+- `magi` assigns the real model (a `Provider / Model` label) that each magi
+  plays in Magi Mode — see [GUI.md](GUI.md#magi) and
+  [FEATURES.md](FEATURES.md#magi-mode-always-get-the-best-response).
 
 The file is read at startup; GUI edits save it immediately.
 

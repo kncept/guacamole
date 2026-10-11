@@ -105,7 +105,16 @@ func (g *Guac) newSessionTab() *sessionTab {
 // session returns the session's ai.Session, creating it if needed.
 func (st *sessionTab) session() *ai.Session {
 	if st.chat.session == nil {
-		loop := ai.NewLoop(st.loopProvider())
+		var provider ai.Provider
+		if st.selectedModel().IsMagi() {
+			// Magi Mode never uses this loop for inference — the panel does —
+			// so it only carries the reporting hooks (OnChunk/OnResponse).
+			// The stand-in provider is never asked to run.
+			provider = errorProvider{err: fmt.Errorf("Magi Mode: turns run through the panel, not this loop")}
+		} else {
+			provider = st.loopProvider()
+		}
+		loop := ai.NewLoop(provider)
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
@@ -304,18 +313,25 @@ func (st *sessionTab) runPrompt(text string) {
 		var inToolRound bool
 		loop.OnChunk = func(chunk ai.Chunk) error {
 			reply.WriteString(chunk.Delta)
+			// Resolve the display text and the new-bubble decision here, on
+			// the loop's goroutine: the accumulator is reset at the end of
+			// each round (see OnResponse), so reading it later on the UI
+			// thread would race.
+			displayText := strings.Trim(reply.String(), "\n")
+			// A response that is entirely empty (only whitespace) gets no
+			// bubble at all: skip until there is something to show.
+			if strings.TrimSpace(displayText) == "" {
+				return nil
+			}
+			// Starting a new response after a tool round creates a new
+			// bubble.
+			startNewBubble := inToolRound
+			if startNewBubble {
+				inToolRound = false
+			}
 			fyne.Do(func() {
-				// Trim leading/trailing newlines from the accumulated response
-				displayText := strings.Trim(reply.String(), "\n")
-				// A response that is entirely empty (only whitespace) gets no
-				// bubble at all: skip until there is something to show.
-				if strings.TrimSpace(displayText) == "" {
-					return
-				}
-				// If we're starting a new response after a tool round, create a new bubble
-				if inToolRound {
+				if startNewBubble {
 					aiLabel = st.chat.addAIMessage()
-					inToolRound = false
 				}
 				if aiLabel == nil {
 					aiLabel = st.chat.addAIMessage()
@@ -339,6 +355,10 @@ func (st *sessionTab) runPrompt(text string) {
 			if hasTools {
 				inToolRound = true
 			}
+			// This round's text is already in its bubble, so start the next
+			// round with a clean accumulator. Without this, a multi-round
+			// reply (or a Magi turn) would concatenate into each new bubble.
+			reply.Reset()
 			if originalOnResponse != nil {
 				originalOnResponse(resp)
 			}

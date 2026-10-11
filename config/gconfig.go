@@ -313,6 +313,9 @@ type GConfig struct {
 	// selected. It is the default for newly created sessions. Left empty
 	// there is no preference and the first available model is used.
 	SelectedModel string `json:"selectedModel,omitempty"`
+	// Magi holds the Magi Mode settings: which real model each of the three
+	// magi plays. See MagiConfig.
+	Magi MagiConfig `json:"magi"`
 }
 
 // NewAPIKey returns an API key ready to store in a ModelProvider: XOR-

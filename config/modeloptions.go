@@ -23,10 +23,37 @@ type ModelOption struct {
 // Label returns a human-readable identifier for the option: the model shown
 // as "provider / model".
 func (m ModelOption) Label() string {
+	if m.IsMagi() {
+		return MagiModel
+	}
 	if m.ModelID == "" {
 		return m.Provider
 	}
 	return m.Provider + " / " + m.ModelName
+}
+
+// IsMagi reports whether the option is the virtual Magi model rather than a
+// real provider model.
+func (m ModelOption) IsMagi() bool {
+	return m.ModelID == MagiModel
+}
+
+// MagiModelOption returns the virtual "Magi" model. It is not a real model:
+// selecting it switches a session to Magi Mode. It leads the list of
+// available models (see AllSelectableModelOptions).
+func MagiModelOption() ModelOption {
+	return ModelOption{
+		Provider:  MagiModel,
+		ModelID:   MagiModel,
+		ModelName: MagiModel,
+	}
+}
+
+// AllSelectableModelOptions builds the full list of models a session may
+// choose from: the virtual "Magi" model first, then every configured
+// provider model.
+func AllSelectableModelOptions(gcfg *GConfig) []ModelOption {
+	return append([]ModelOption{MagiModelOption()}, AllModelOptionsFromProviders(gcfg)...)
 }
 
 // AllModelOptionsFromProviders builds the selectable model list from the

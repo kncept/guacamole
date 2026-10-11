@@ -1,14 +1,18 @@
 package app
 
 import (
+	"fmt"
+
 	"fyne.io/fyne/v2"
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/modelclient"
 	"github.com/kncept/guacamole/roles"
 	"github.com/kncept/guacamole/roles/definitions"
 )
@@ -87,16 +91,40 @@ func (g *Guac) Run() {
 }
 
 // reloadModels rebuilds the available model list from the configured providers
-// in the guac config. The "Provider / Model" dropdown is sourced solely from
-// these configured providers.
+// in the guac config. The "Provider / Model" dropdown is sourced from these
+// providers, with the virtual "Magi" model leading the list.
 //
 // It also refreshes the dropdown in every open session, so a provider or model
 // added in Preferences appears immediately without restarting the app.
 func (g *Guac) reloadModels() {
 	if g.config != nil {
-		g.models = config.AllModelOptionsFromProviders(g.config)
+		g.models = config.AllSelectableModelOptions(g.config)
 	}
 	g.refreshModelSelectors()
+}
+
+// realModelOptions returns the available models excluding the virtual Magi
+// model. It backs the per-magi dropdowns in Preferences, which may only pick
+// real models.
+func (g *Guac) realModelOptions() []config.ModelOption {
+	opts := make([]config.ModelOption, 0, len(g.models))
+	for _, m := range g.models {
+		if !m.IsMagi() {
+			opts = append(opts, m)
+		}
+	}
+	return opts
+}
+
+// modelOptionForLabel finds the real model whose label matches. The virtual
+// Magi model never matches, so a magi can never be assigned the Magi model.
+func (g *Guac) modelOptionForLabel(label string) (config.ModelOption, bool) {
+	for _, m := range g.models {
+		if !m.IsMagi() && m.Label() == label {
+			return m, true
+		}
+	}
+	return config.ModelOption{}, false
 }
 
 // refreshModelSelectors updates every open session's "Provider / Model"
@@ -136,18 +164,48 @@ func containsLabel(labels []string, want string) bool {
 }
 
 // defaultModelLabel returns the model new sessions should start on: the model
-// stored in the config when it is still available, otherwise the first
-// available model. An unset or stale setting is not an error; it simply falls
-// back to the first entry.
+// stored in the config when it is still available, otherwise the first real
+// (non-Magi) available model. An unset or stale setting is not an error; it
+// simply falls back to the first entry. Magi Mode is never the default unless
+// it was explicitly stored *and* the panel is fully configured: a broken
+// setting must not leave a new session unable to send.
 func (g *Guac) defaultModelLabel() string {
-	if g.config != nil && g.config.SelectedModel != "" &&
-		containsLabel(labelsForModels(g.models), g.config.SelectedModel) {
-		return g.config.SelectedModel
+	if g.config != nil && g.config.SelectedModel != "" {
+		if g.config.SelectedModel == config.MagiModel {
+			if g.magiConfigured() {
+				return config.MagiModel
+			}
+		} else if containsLabel(labelsForModels(g.models), g.config.SelectedModel) {
+			return g.config.SelectedModel
+		}
 	}
-	if len(g.models) > 0 {
-		return g.models[0].Label()
+	return g.firstRealModelLabel()
+}
+
+// firstRealModelLabel returns the label of the first available real model, or
+// "" when there are none.
+func (g *Guac) firstRealModelLabel() string {
+	for _, m := range g.models {
+		if !m.IsMagi() {
+			return m.Label()
+		}
 	}
 	return ""
+}
+
+// magiConfigured reports whether the Magi panel can actually be built: every
+// magi has a model assigned and each assignment still resolves to an available
+// real model.
+func (g *Guac) magiConfigured() bool {
+	if g.config == nil || !g.config.Magi.Assigned() {
+		return false
+	}
+	for _, name := range config.MagiNames() {
+		if _, ok := g.modelOptionForLabel(g.config.Magi.Model(name)); !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // activeSession returns the session highlighted in the tab strip, or nil when
@@ -180,20 +238,92 @@ func (g *Guac) syncSelectedModel() {
 
 func (g *Guac) onModelChanged(st *sessionTab, label string) {
 	for _, m := range g.models {
-		if m.Label() == label {
-			sess := st.session()
+		if m.Label() != label {
+			continue
+		}
+		sess := st.session()
+		if m.IsMagi() {
+			panel, err := g.magiPanelFor(st)
+			if err != nil {
+				// The panel cannot run without a model for every magi;
+				// tell the user and fall back to a real model.
+				dialog.ShowError(err, g.w)
+				if fallback := g.firstRealModelLabel(); fallback != "" {
+					st.banner.modelSel.SetSelected(fallback)
+				}
+				return
+			}
+			sess.Magi = panel
+			sess.Model = config.MagiModel
+		} else {
 			loop := ai.NewLoop(st.loopProvider())
 			loop.Stream = true
 			sess.Loop = loop
 			sess.Model = m.ModelID
-			// Only the session the user is looking at should set the stored
-			// default; background selector refreshes must not overwrite it.
-			if st == g.activeSession() {
-				g.persistSelectedModel(label)
-			}
-			return
+			sess.Magi = nil
 		}
+		// Only the session the user is looking at should set the stored
+		// default; background selector refreshes must not overwrite it.
+		if st == g.activeSession() {
+			g.persistSelectedModel(label)
+		}
+		return
 	}
+}
+
+// magiPanelFor builds a Magi panel for st and wires its phase lines into st's
+// log, so the user can watch the panel at work.
+func (g *Guac) magiPanelFor(st *sessionTab) (*ai.Magi, error) {
+	panel, err := g.buildMagiPanel()
+	if err != nil {
+		return nil, err
+	}
+	panel.OnPhase = func(line string) {
+		// OnPhase runs on the panel's phase goroutines; the log is UI state.
+		fyne.Do(func() {
+			if st != nil && st.chat != nil {
+				st.chat.addToolCall("Magi: " + line)
+			}
+		})
+	}
+	return panel, nil
+}
+
+// buildMagiPanel builds the three-magi panel from the models assigned in
+// Preferences → Magi. It fails when a magi has no model assigned or when an
+// assigned model is no longer configured, so the user gets a specific message
+// instead of a mysterious turn failure.
+func (g *Guac) buildMagiPanel() (*ai.Magi, error) {
+	if g.config == nil {
+		return nil, fmt.Errorf("magi: no configuration available")
+	}
+	panel := &ai.Magi{}
+	for _, name := range config.MagiNames() {
+		label := g.config.Magi.Model(name)
+		if label == "" {
+			return nil, fmt.Errorf("magi: %s has no model assigned — assign one in Preferences → Magi", name)
+		}
+		opt, ok := g.modelOptionForLabel(label)
+		if !ok {
+			return nil, fmt.Errorf("magi: %s's model %q is no longer available — update it in Preferences → Magi", name, label)
+		}
+		provider, err := modelclient.New(&config.ApiModelInterfaceDetails{
+			APIType:        opt.ProviderType,
+			BaseUrl:        opt.BaseURL,
+			ApiKey:         opt.APIKey,
+			ModelName:      opt.ModelID,
+			AppAttribution: opt.AppAttribution,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("magi: %s: %w", name, err)
+		}
+		loop := ai.NewLoop(provider)
+		// The magi do not stream: each returns a whole response, and the
+		// session emits only the winning one.
+		loop.Stream = false
+		panel.Members = append(panel.Members, ai.MagiMember{Name: name, Loop: loop, Model: opt.ModelID})
+	}
+	return panel, nil
 }
 
 func (g *Guac) onRoleChanged(st *sessionTab, label string) {
@@ -217,6 +347,9 @@ func (g *Guac) refreshContent() {
 // the session tabs, highlighting the active session. Called by that screen's
 // Back button.
 func (g *Guac) backToSessions() {
+	// A Magi panel caches its member models, so a change made in
+	// Preferences → Magi needs the panels rebuilt on the way back.
+	g.refreshMagiPanels()
 	g.w.SetContent(g.tabs)
 	if len(g.sessions) > 0 {
 		if st := g.sessions[g.activeIdx]; st.tab != nil {
@@ -227,6 +360,21 @@ func (g *Guac) backToSessions() {
 		}
 	}
 	g.refreshContent()
+}
+
+// refreshMagiPanels rebuilds the panel of every session currently in Magi Mode
+// so model changes made in Preferences take effect immediately. A panel that
+// can no longer be built (an assignment was cleared) is left as it was, so a
+// running session is never broken by an unrelated edit.
+func (g *Guac) refreshMagiPanels() {
+	for _, st := range g.sessions {
+		if st.chat == nil || st.chat.session == nil || st.chat.session.Magi == nil {
+			continue
+		}
+		if panel, err := g.magiPanelFor(st); err == nil {
+			st.chat.session.Magi = panel
+		}
+	}
 }
 
 // updateTab creates/refreshes the tab item for the session and appends it to

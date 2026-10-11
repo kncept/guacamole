@@ -17,6 +17,9 @@ Absolutely need the BEST AI response, regardless of the model? Or just Tokenmaxx
 - Tool use: the model can work with the local filesystem, run shell commands,
   and fetch URLs — every call is shown as it happens, and permission rules
   decide what needs your approval.
+- **Magi Mode**: a panel of three models (Melchior, Balthasar, Casper) answers
+  each turn, scores one another's answers, and only the best reply is kept —
+  pick it as the **Magi** model in a session.
 - Conversations with history, saved after every turn and resumable with
   `guacamole --session <session ID>`.
 
@@ -40,7 +43,7 @@ The `docs/` folder has the details:
 | Doc | What's inside |
 | --- | ------------- |
 | [FEATURES](docs/FEATURES.md) | What Guacamole does: tool-based chat, mid-session model/provider switching, Magi Mode |
-| [GUI](docs/GUI.md) | The desktop app: sessions, preferences (providers, roles, sessions, permissions), building |
+| [GUI](docs/GUI.md) | The desktop app: sessions, preferences (providers, roles, magi, sessions, permissions), building |
 | [TOOLS](docs/TOOLS.md) | The tools a model can call: filesystem, shell, web, user questions |
 | [PROVIDERS](docs/PROVIDERS.md) | API types, presets, the config file, app attribution, model selection & listing |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Internals: the `ai` request/processing/response loop, sessions, tool use, permissions |

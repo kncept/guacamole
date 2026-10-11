@@ -62,6 +62,14 @@ type Session struct {
 	// round-limit error.
 	UserInput userinput.RequestForegroundUserInput
 
+	// Magi, when set, switches the session to Magi Mode: each turn runs the
+	// Magi panel's two-phase turn (inference, voting, collation) instead of
+	// this session's single Loop, and only the highest-scoring response is
+	// kept and executed. Loop is still used to report the winning response
+	// to observers (its OnChunk and OnResponse hooks fire), so a UI keeps
+	// working unchanged.
+	Magi *Magi
+
 	messages []Message
 }
 
@@ -169,15 +177,27 @@ func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 	}
 }
 
-// run sends one request through the loop. If the provider rate limits the
-// request (HTTP 429) and a UserInput is configured, the user is asked
-// whether to retry: "Retry" sends the request again with a fresh retry
-// budget (the loop's own retries were already spent), "Abort" (or a nil
-// UserInput, or a failed prompt) returns the rate-limit error.
+// run sends one request through the session's turn runner — the Magi panel
+// in Magi Mode, otherwise the single Loop. If the provider rate limits the
+// request (HTTP 429) and a UserInput is configured, the user is asked whether
+// to retry: "Retry" sends the request again with a fresh retry budget (the
+// loop's own retries were already spent), "Abort" (or a nil UserInput, or a
+// failed prompt) returns the rate-limit error.
 func (this *Session) run(ctx context.Context, req Request) (Response, error) {
 	for {
-		resp, err := this.Loop.Run(ctx, req)
+		var (
+			resp Response
+			err  error
+		)
+		if this.Magi != nil {
+			resp, err = this.Magi.Run(ctx, req)
+		} else {
+			resp, err = this.Loop.Run(ctx, req)
+		}
 		if err == nil {
+			if this.Magi != nil {
+				this.emitMagi(resp)
+			}
 			return resp, nil
 		}
 		var rateLimited *RateLimitError
@@ -200,6 +220,22 @@ func (this *Session) run(ctx context.Context, req Request) (Response, error) {
 			case <-time.After(rateLimited.RetryAfter):
 			}
 		}
+	}
+}
+
+// emitMagi reports a Magi turn's winning response to the session's observers
+// through the Loop's hooks. The magi do not stream, so the winning text is
+// delivered as a single chunk; it is emitted before OnResponse, matching the
+// order a streaming provider uses.
+func (this *Session) emitMagi(resp Response) {
+	if this.Loop == nil {
+		return
+	}
+	if this.Loop.OnChunk != nil && resp.Text != "" {
+		_ = this.Loop.OnChunk(Chunk{Delta: resp.Text, Finished: true})
+	}
+	if this.Loop.OnResponse != nil {
+		this.Loop.OnResponse(resp)
 	}
 }
 

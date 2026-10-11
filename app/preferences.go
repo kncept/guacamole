@@ -16,7 +16,7 @@ import (
 
 // preferenceSections are the entries of the Preferences navigation list, in
 // display order. Each one names a screen built by screenFor.
-var preferenceSections = []string{"Providers", "Roles", "Sessions", "Permissions"}
+var preferenceSections = []string{"Providers", "Roles", "Magi", "Sessions", "Permissions"}
 
 // preferencesScreen is the in-window Preferences screen: a Back button on
 // top, a list of sections down the left side (a vertical tab list) and the
@@ -87,6 +87,8 @@ func (p *preferencesScreen) screenFor(name string) fyne.CanvasObject {
 		return p.providersScreen()
 	case "Roles":
 		return p.rolesScreen()
+	case "Magi":
+		return p.magiScreen()
 	case "Sessions":
 		return p.sessionsScreen()
 	case "Permissions":
@@ -168,6 +170,52 @@ func (p *preferencesScreen) rolesScreen() fyne.CanvasObject {
 	split := container.NewVSplit(list, container.NewVScroll(prompt))
 	split.Offset = 0.4
 	return split
+}
+
+// magiScreen configures Magi Mode: the real model that plays each of the three
+// magi. It explains the mode and offers one model dropdown per magi, in the
+// fixed display order. The virtual "Magi" model is never offered here — a
+// magi must be a real model.
+func (p *preferencesScreen) magiScreen() fyne.CanvasObject {
+	cfg := p.guac.config
+	if cfg == nil {
+		return paddedLabel("No config available")
+	}
+
+	// The per-magi dropdowns offer every real model; the virtual "Magi" model
+	// is deliberately excluded.
+	labels := labelsForModels(p.guac.realModelOptions())
+
+	rows := container.NewVBox()
+	rows.Add(widget.NewLabelWithStyle("Magi Mode", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
+	rows.Add(widget.NewLabel(
+		"Magi Mode chooses the best output from the agents below.\n\n" +
+			"On every turn each magi answers the prompt, the magi then score one " +
+			"another's answers out of 100, and only the highest-scoring answer is " +
+			"kept and used. Assign a real model to each magi; the virtual \"Magi\" " +
+			"model cannot take a role."))
+	rows.Add(widget.NewSeparator())
+
+	if len(labels) == 0 {
+		rows.Add(widget.NewLabel("No models available yet. Add a provider in Preferences → Providers first."))
+		return container.NewVScroll(rows)
+	}
+
+	for _, name := range config.MagiNames() {
+		magiName := name
+		sel := widget.NewSelect(labels, func(label string) {
+			cfg.Magi.SetModel(magiName, label)
+			_ = cfg.Save()
+		})
+		if current := cfg.Magi.Model(magiName); current != "" && containsLabel(labels, current) {
+			sel.SetSelected(current)
+		}
+		rows.Add(container.NewBorder(nil, nil,
+			widget.NewLabelWithStyle(magiName, fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+			nil, sel))
+	}
+
+	return container.NewVScroll(rows)
 }
 
 // sessionsScreen lists the sessions saved on disk, each with a delete

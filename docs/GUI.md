@@ -49,7 +49,13 @@ Two selectors control what the session talks to:
   the session's system prompt.
 - **Provider / Model:** picks a model, shown as `Provider / Model` (e.g.
   `openrouter / openrouter/auto`). Selecting one rebuilds the session's AI loop
-  against that provider and model.
+  against that provider and model. At the top of the list is the virtual
+  **Magi** entry: selecting it puts the session into **Magi Mode**, a panel of
+  three models that answer and judge one another, keeping only the best reply
+  (see [Preferences → Magi](#magi) and
+  [FEATURES.md](FEATURES.md#magi-mode-always-get-the-best-response)). Magi
+  Mode needs all three magi assigned, so it can only be selected once the panel
+  is configured.
 
 New sessions start on the stored default model — the model of the active
 session is recorded as you switch, so the app reopens on the last model you
@@ -137,7 +143,7 @@ The screen is a **Back** button and a *Preferences* title on top, with a list
 of sections on the left and the selected section's screen on the right. The
 last-viewed section is remembered the next time you open Preferences. **Back**
 returns to the conversation tabs, reselecting the session you were on.
-Sections: **Providers**, **Roles**, **Sessions**, **Permissions**.
+Sections: **Providers**, **Roles**, **Magi**, **Sessions**, **Permissions**.
 
 ### Providers
 
@@ -190,6 +196,21 @@ A list of all roles. Selecting a role shows its name (bold, with its set name
 in parentheses when present) and its full system prompt below the list. The
 first role is selected by default. Shows *"No roles found."* if there are none.
 
+### Magi
+
+Configures **Magi Mode** (see [FEATURES.md](FEATURES.md#magi-mode-always-get-the-best-response)).
+The screen explains the mode — *"Magi Mode chooses the best output from the
+agents below"* — and then shows one model dropdown per magi, in the fixed
+order **Melchior**, **Balthasar**, **Casper**. Picking a model saves it
+immediately.
+
+The dropdowns list every real model (the same list as a session's **Provider /
+Model** dropdown), but deliberately **exclude** the virtual **Magi** model: a
+magi cannot take a role. If no providers are configured yet, the screen says
+so and no dropdowns are shown. The chosen models are stored in the guacamole
+config (`~/.guac/config.json`), and changes apply to open Magi Mode sessions
+when you leave Preferences.
+
 ### Sessions
 
 Lists every saved session on disk (from `~/.guac/session`), each row showing
@@ -225,7 +246,7 @@ them directly:
 
 | What | Where |
 | ---- | ----- |
-| Providers, roles-independent config, permissions, selected model | `~/.guac/config.json` |
+| Providers, roles-independent config, permissions, selected model, magi models | `~/.guac/config.json` |
 | Saved sessions | `~/.guac/session/<session ID>.json` |
 
 The provider list is read at startup and whenever providers change, and open
@@ -259,7 +280,7 @@ for the config file shape.
 | `cmd/icongen/main.go` | Draws the app icon for the `.app` bundle |
 | `app/app.go` | The `Guac` app: main window, tabs, menu, session lifecycle |
 | `app/sessontab.go` | One session tab: banner, input, output, prompt handling |
-| `app/preferences.go` | The Preferences screen (Providers, Roles, Sessions, Permissions) |
+| `app/preferences.go` | The Preferences screen (Providers, Roles, Magi, Sessions, Permissions) |
 | `app/chatlog.go` | Message bubbles, spinner/cancel row, activity lines |
 | `config` | Providers, permissions, config file load/save |
 | `roles` | Loads roles (system prompts) |
@@ -272,7 +293,7 @@ for the config file shape.
   Preferences tab), the list of session tabs, the loaded models/roles, and the
   (lazily built) Preferences screen.
 - **`preferencesScreen`** — the in-window Preferences screen: Back button,
-  section navigation, and the Providers / Roles / Sessions / Permissions
+  section navigation, and the Providers / Roles / Magi / Sessions / Permissions
   panels.
 - **`sessionTab`** — bundles a chat session with its tab item, banner, and
   layout. Knows where it is displayed and which model/role it uses.

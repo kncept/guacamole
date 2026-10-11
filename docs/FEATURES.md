@@ -43,21 +43,50 @@ view of your interest.
 
 Detail: [GUI.md](GUI.md), [PROVIDERS.md](PROVIDERS.md).
 
-## Magi Mode (always get the best response) — planned
+## Magi Mode (always get the best response)
 
-> **Status:** on the roadmap, not shipped yet. This section describes the
-> design intent.
-
-Magi Mode is the planned **multi-AI mode**: instead of trusting one model, a
-prompt is sent to several, and only the highest-quality responses are kept.
+Magi Mode is the **multi-AI mode**: instead of trusting one model, every turn
+is sent to a panel of models, the models judge one another's answers, and only
+the best answer is kept.
 
 - Want the BEST answer regardless of the model? Magi Mode runs the request
-  across multiple models and picks the best output.
-- Just Tokenmaxxing? Magi Mode can trade quality for cost when you want to
-  save tokens.
+  across several models and picks the best output.
+- Just Tokenmaxxing? Run the panel on cheap models when you want quality
+  without paying flagship prices.
 
-The `ai` package is built with this in mind: the request/processing/response
-loop (`ai.Loop`) and providers are factored out specifically so a future
-multi-agent system can run the same cycle across several providers and
-combine the results. The exact selection strategy (votes, scoring, fallbacks,
-cost thresholds) is still to be decided.
+### The panel
+
+Magi Mode has three fixed agents, in order: **Melchior**, **Balthasar**, and
+**Casper**. Each one plays a real model of your choosing — set them in
+**Preferences → Magi** (see [GUI.md](GUI.md#magi)). A model may hold more than
+one seat.
+
+### How a turn works
+
+Every turn runs in two phases before the answer is executed:
+
+1. **Inference** — each magi is sent the current conversation (your prompt, or
+   the latest tool output) and answers independently, in parallel.
+2. **Voting** — once *all* magi have answered, each magi receives the other
+   magi's answers in a **single** request and scores each one out of 100.
+3. **Collation** — the scores are totaled per answer (a model's total is the
+   sum of the scores the *other* magi gave it) and only the highest-scoring
+   answer is kept. Ties keep the earlier magi. A judge that returns no usable
+   score simply contributes nothing.
+4. **Execution** — the kept answer is then handled exactly like a normal
+   reply: its text is shown, any tool calls it requested run, and the
+   conversation loops on the tool output — which re-enters the panel for the
+   next turn.
+
+The magi never see their own answer while judging, and only the winner is ever
+shown: the losing answers and the raw votes stay out of the transcript. The
+session log reports the panel's progress with activity lines such as
+`→ Magi: answers in from Melchior, Balthasar, Casper` and
+`→ Magi: Melchior 130, Balthasar 170, Casper 90 — Balthasar wins`.
+
+> **Note:** Magi Mode needs a model assigned to all three magi. Selecting
+> **Magi** before that shows an error and leaves the session on its previous
+> model.
+
+The `ai` package backs this with `ai.Magi` (a panel of `ai.MagiMember`s run
+through `ai.Loop`s); see [ARCHITECTURE.md](ARCHITECTURE.md#magi-mode).
