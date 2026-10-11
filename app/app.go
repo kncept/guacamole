@@ -15,11 +15,11 @@ import (
 
 // chat represents a single chat session with its own output log and input field.
 type chat struct {
-	id            string
-	log           *fyne.Container // VBox of message bubbles, newest at the bottom
-	logScroll     *container.Scroll
-	input         *widget.Entry
-	session *ai.Session
+	id        string
+	log       *fyne.Container // VBox of message bubbles, newest at the bottom
+	logScroll *container.Scroll
+	input     *widget.Entry
+	session   *ai.Session
 	// activeSpinner is the spinner-and-cancel row shown while a request is in
 	// flight, or nil when no request is running.
 	activeSpinner *spinnerWithCancel
@@ -71,6 +71,9 @@ func New() *Guac {
 	// would start on the pinned Preferences tab. Select the first session
 	// instead.
 	g.tabs.Select(g.sessions[g.activeIdx].tab)
+	// Record the starting session's model as the stored default (a no-op when
+	// it already matches, so nothing is written unless it changed).
+	g.syncSelectedModel()
 
 	g.buildMenu()
 	g.refreshContent()
@@ -98,8 +101,9 @@ func (g *Guac) reloadModels() {
 
 // refreshModelSelectors updates every open session's "Provider / Model"
 // dropdown to match g.models. Each session keeps its current selection when
-// that model is still available; otherwise it falls back to the first model
-// (or clears the selection when no models are configured).
+// that model is still available; otherwise it falls back to the stored
+// default model (or the first model, and clears the selection when no models
+// are configured).
 func (g *Guac) refreshModelSelectors() {
 	labels := labelsForModels(g.models)
 	for _, st := range g.sessions {
@@ -110,10 +114,7 @@ func (g *Guac) refreshModelSelectors() {
 		selected := sel.Selected
 		sel.Options = labels
 		if selected == "" || !containsLabel(labels, selected) {
-			selected = ""
-			if len(labels) > 0 {
-				selected = labels[0]
-			}
+			selected = g.defaultModelLabel()
 		}
 		if selected == "" {
 			sel.ClearSelected()
@@ -134,6 +135,49 @@ func containsLabel(labels []string, want string) bool {
 	return false
 }
 
+// defaultModelLabel returns the model new sessions should start on: the model
+// stored in the config when it is still available, otherwise the first
+// available model. An unset or stale setting is not an error; it simply falls
+// back to the first entry.
+func (g *Guac) defaultModelLabel() string {
+	if g.config != nil && g.config.SelectedModel != "" &&
+		containsLabel(labelsForModels(g.models), g.config.SelectedModel) {
+		return g.config.SelectedModel
+	}
+	if len(g.models) > 0 {
+		return g.models[0].Label()
+	}
+	return ""
+}
+
+// activeSession returns the session highlighted in the tab strip, or nil when
+// there is none.
+func (g *Guac) activeSession() *sessionTab {
+	if g.activeIdx < 0 || g.activeIdx >= len(g.sessions) {
+		return nil
+	}
+	return g.sessions[g.activeIdx]
+}
+
+// persistSelectedModel stores label as the default model for new sessions,
+// writing the config to disk only when the stored value actually changes.
+func (g *Guac) persistSelectedModel(label string) {
+	if g.config == nil {
+		return
+	}
+	if g.config.SetSelectedModel(label) {
+		_ = g.config.Save()
+	}
+}
+
+// syncSelectedModel makes the stored default match the active session's model,
+// so the app reopens on the model the user was last working with.
+func (g *Guac) syncSelectedModel() {
+	if st := g.activeSession(); st != nil && st.banner != nil && st.banner.modelSel != nil {
+		g.persistSelectedModel(st.banner.modelSel.Selected)
+	}
+}
+
 func (g *Guac) onModelChanged(st *sessionTab, label string) {
 	for _, m := range g.models {
 		if m.Label() == label {
@@ -142,6 +186,11 @@ func (g *Guac) onModelChanged(st *sessionTab, label string) {
 			loop.Stream = true
 			sess.Loop = loop
 			sess.Model = m.ModelID
+			// Only the session the user is looking at should set the stored
+			// default; background selector refreshes must not overwrite it.
+			if st == g.activeSession() {
+				g.persistSelectedModel(label)
+			}
 			return
 		}
 	}
@@ -250,12 +299,14 @@ func (g *Guac) onTabSelected(selected *container.TabItem) {
 		g.tabs.Remove(g.newTab)
 		g.tabs.Append(g.newTab)
 		g.tabs.SelectIndex(len(g.tabs.Items) - 2)
+		g.syncSelectedModel()
 		g.refreshContent()
 		return
 	}
 	for i, st := range g.sessions {
 		if st.tab == selected {
 			g.activeIdx = i
+			g.syncSelectedModel()
 			g.refreshContent()
 			return
 		}
@@ -272,6 +323,7 @@ func (g *Guac) buildMenu() {
 		g.tabs.Remove(g.newTab)
 		g.tabs.Append(g.newTab)
 		g.tabs.SelectIndex(len(g.tabs.Items) - 2)
+		g.syncSelectedModel()
 		g.refreshContent()
 	})
 

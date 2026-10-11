@@ -300,6 +300,10 @@ type GConfig struct {
 	Permissions Permissions `json:"permissions"`
 	// ModelProviders holds the configured model providers.
 	ModelProviders []ModelProvider `json:"modelProviders"`
+	// SelectedModel is the "provider / model" label the GUI last had
+	// selected. It is the default for newly created sessions. Left empty
+	// there is no preference and the first available model is used.
+	SelectedModel string `json:"selectedModel,omitempty"`
 }
 
 // NewAPIKey returns an API key ready to store in a ModelProvider: XOR-
@@ -392,6 +396,17 @@ func (this *GConfig) GetModelProvider(i int) (ModelProvider, bool) {
 		return ModelProvider{}, false
 	}
 	return this.ModelProviders[i], true
+}
+
+// SetSelectedModel records label as the default model for new sessions. It
+// reports whether the stored value changed, so callers can skip a disk write
+// when there is nothing to save.
+func (this *GConfig) SetSelectedModel(label string) bool {
+	if this.SelectedModel == label {
+		return false
+	}
+	this.SelectedModel = label
+	return true
 }
 
 // NormalizeModelProvider fills in defaults for a provider missing connection

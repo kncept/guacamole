@@ -92,8 +92,8 @@ func (g *Guac) newSessionTab() *sessionTab {
 		func(label string) { g.onModelChanged(st, label) },
 		func(label string) { g.onRoleChanged(st, label) },
 	)
-	if len(g.models) > 0 {
-		st.banner.modelSel.SetSelected(g.models[0].Label())
+	if label := g.defaultModelLabel(); label != "" {
+		st.banner.modelSel.SetSelected(label)
 	}
 	if len(g.roles) > 0 {
 		st.banner.roleSel.SetSelected(g.roles[0].RoleName)

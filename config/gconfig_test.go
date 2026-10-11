@@ -479,3 +479,51 @@ func TestLoadMigratesExecutionShape(t *testing.T) {
 		t.Errorf("OpenCode APIType = %q, want %q", oc.APIType, ModelProviderTypeOpenCode)
 	}
 }
+
+// TestSetSelectedModelTracksChanges checks that SetSelectedModel reports
+// whether the stored value changed, so callers can skip needless disk writes.
+func TestSetSelectedModelTracksChanges(t *testing.T) {
+	c := &GConfig{}
+
+	if !c.SetSelectedModel("OpenAI / gpt-4o") {
+		t.Error("SetSelectedModel on an unset config = false, want true")
+	}
+	if c.SelectedModel != "OpenAI / gpt-4o" {
+		t.Errorf("SelectedModel = %q, want %q", c.SelectedModel, "OpenAI / gpt-4o")
+	}
+	if c.SetSelectedModel("OpenAI / gpt-4o") {
+		t.Error("SetSelectedModel with the same value = true, want false")
+	}
+	if !c.SetSelectedModel("OpenAI / gpt-4o-mini") {
+		t.Error("SetSelectedModel with a new value = false, want true")
+	}
+}
+
+// TestSelectedModelRoundTrip checks that the selected model is written to and
+// read back from config.json.
+func TestSelectedModelRoundTrip(t *testing.T) {
+	withHome(t)
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	c.AddModelProvider(ModelProvider{
+		APIType: ModelProviderTypeOpenAI,
+		Name:    "OpenAI",
+		APIKey:  NewAPIKey("k"),
+		Models:  []string{"gpt-4o", "gpt-4o-mini"},
+	})
+	c.SetSelectedModel("OpenAI / gpt-4o-mini")
+	if err := c.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	c2, err := Load()
+	if err != nil {
+		t.Fatalf("Load (second): %v", err)
+	}
+	if c2.SelectedModel != "OpenAI / gpt-4o-mini" {
+		t.Errorf("SelectedModel = %q, want %q", c2.SelectedModel, "OpenAI / gpt-4o-mini")
+	}
+}
