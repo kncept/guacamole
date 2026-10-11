@@ -606,17 +606,22 @@ func (p *preferencesScreen) permissionsScreen() fyne.CanvasObject {
 
 	rows.Add(widget.NewLabelWithStyle("Filesystem", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
 	rows.Add(fsAllowAll)
-	rows.Add(widget.NewLabel("Directory → Read / Write"))
+	rows.Add(widget.NewLabel("Read / Write → Directory"))
 
-	// Filesystem directory rules
+	// Filesystem directory rules live in their own container, so a new row can
+	// be appended in place rather than rebuilding (and re-scrolling) the whole
+	// screen.
+	fsRules := container.NewVBox()
 	for i := range cfg.Permissions.Filesystem.Directories {
-		p.addFilesystemRuleRow(rows, cfg, i)
+		p.addFilesystemRuleRow(fsRules, cfg, i)
 	}
+	rows.Add(fsRules)
 
 	addFs := widget.NewButton("Add Directory", func() {
 		cfg.Permissions.Filesystem.Directories = append(cfg.Permissions.Filesystem.Directories, config.DirectoryPermission{})
 		_ = cfg.Save()
-		p.rebuildPermissionsScreen()
+		p.addFilesystemRuleRow(fsRules, cfg, len(cfg.Permissions.Filesystem.Directories)-1)
+		fsRules.Refresh()
 	})
 	rows.Add(addFs)
 	rows.Add(widget.NewSeparator())
@@ -642,17 +647,22 @@ func (p *preferencesScreen) permissionsScreen() fyne.CanvasObject {
 
 	rows.Add(widget.NewLabelWithStyle("Web", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}))
 	rows.Add(webAllowAll)
-	rows.Add(widget.NewLabel("Domain → Policy"))
+	rows.Add(widget.NewLabel("Policy → Domain"))
 
-	// Web domain rules
+	// Web domain rules live in their own container, so a new row can be
+	// appended in place rather than rebuilding (and re-scrolling) the whole
+	// screen.
+	webRules := container.NewVBox()
 	for i := range cfg.Permissions.Web.Domains {
-		p.addWebRuleRow(rows, cfg, i)
+		p.addWebRuleRow(webRules, cfg, i)
 	}
+	rows.Add(webRules)
 
 	addWeb := widget.NewButton("Add Domain", func() {
 		cfg.Permissions.Web.Domains = append(cfg.Permissions.Web.Domains, config.DomainPermission{})
 		_ = cfg.Save()
-		p.rebuildPermissionsScreen()
+		p.addWebRuleRow(webRules, cfg, len(cfg.Permissions.Web.Domains)-1)
+		webRules.Refresh()
 	})
 	rows.Add(addWeb)
 	rows.Add(widget.NewSeparator())
@@ -697,6 +707,10 @@ func (p *preferencesScreen) addFilesystemRuleRow(rows *fyne.Container, cfg *conf
 	dir := &cfg.Permissions.Filesystem.Directories[index]
 	dirEntry := widget.NewEntry()
 	dirEntry.SetText(dir.Directory)
+	dirEntry.OnChanged = func(s string) {
+		dir.Directory = s
+		_ = cfg.Save()
+	}
 	readSel := widget.NewSelect(policyOptions(), func(s string) {
 		dir.Read = config.Policy(s)
 		_ = cfg.Save()
@@ -713,14 +727,33 @@ func (p *preferencesScreen) addFilesystemRuleRow(rows *fyne.Container, cfg *conf
 	p.fsReadSelects = append(p.fsReadSelects, readSel)
 	p.fsWriteSelects = append(p.fsWriteSelects, writeSel)
 
-	removeBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
+	removeBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
 		cfg.Permissions.Filesystem.Directories = append(cfg.Permissions.Filesystem.Directories[:index], cfg.Permissions.Filesystem.Directories[index+1:]...)
 		_ = cfg.Save()
-		p.rebuildPermissionsScreen()
+		p.rebuildFilesystemRules(rows, cfg)
 	})
 	removeBtn.Importance = widget.LowImportance
 
-	rows.Add(container.NewHBox(dirEntry, readSel, writeSel, removeBtn))
+	// Border layout puts the controls on the left and lets the directory entry
+	// stretch across the remaining width, instead of being clipped to its
+	// minimum size as it would be in an HBox.
+	rows.Add(container.NewBorder(nil, nil,
+		container.NewHBox(readSel, writeSel, removeBtn), nil, dirEntry))
+}
+
+// rebuildFilesystemRules repopulates the directory rule rows in place after one
+// is added or removed. Rebuilding inside the existing container (instead of
+// re-showing the whole section) leaves the surrounding scroll container intact,
+// so the view no longer jumps back to the top.
+func (p *preferencesScreen) rebuildFilesystemRules(container *fyne.Container, cfg *config.GConfig) {
+	p.fsDirEntries = nil
+	p.fsReadSelects = nil
+	p.fsWriteSelects = nil
+	container.RemoveAll()
+	for i := range cfg.Permissions.Filesystem.Directories {
+		p.addFilesystemRuleRow(container, cfg, i)
+	}
+	container.Refresh()
 }
 
 // addWebRuleRow adds a row for editing a web domain rule
@@ -728,6 +761,10 @@ func (p *preferencesScreen) addWebRuleRow(rows *fyne.Container, cfg *config.GCon
 	d := &cfg.Permissions.Web.Domains[index]
 	dEntry := widget.NewEntry()
 	dEntry.SetText(d.Domain)
+	dEntry.OnChanged = func(s string) {
+		d.Domain = s
+		_ = cfg.Save()
+	}
 	polSel := widget.NewSelect(policyOptions(), func(s string) {
 		d.Policy = config.Policy(s)
 		_ = cfg.Save()
@@ -738,12 +775,30 @@ func (p *preferencesScreen) addWebRuleRow(rows *fyne.Container, cfg *config.GCon
 	p.webDomainEntries = append(p.webDomainEntries, dEntry)
 	p.webPolicySelects = append(p.webPolicySelects, polSel)
 
-	removeBtn := widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), func() {
+	removeBtn := widget.NewButtonWithIcon("", theme.DeleteIcon(), func() {
 		cfg.Permissions.Web.Domains = append(cfg.Permissions.Web.Domains[:index], cfg.Permissions.Web.Domains[index+1:]...)
 		_ = cfg.Save()
-		p.rebuildPermissionsScreen()
+		p.rebuildWebRules(rows, cfg)
 	})
 	removeBtn.Importance = widget.LowImportance
 
-	rows.Add(container.NewHBox(dEntry, polSel, removeBtn))
+	// Border layout puts the controls on the left and lets the domain entry
+	// stretch across the remaining width, instead of being clipped to its
+	// minimum size as it would be in an HBox.
+	rows.Add(container.NewBorder(nil, nil,
+		container.NewHBox(polSel, removeBtn), nil, dEntry))
+}
+
+// rebuildWebRules repopulates the domain rule rows in place after one is added
+// or removed. Rebuilding inside the existing container (instead of re-showing
+// the whole section) leaves the surrounding scroll container intact, so the
+// view no longer jumps back to the top.
+func (p *preferencesScreen) rebuildWebRules(container *fyne.Container, cfg *config.GConfig) {
+	p.webDomainEntries = nil
+	p.webPolicySelects = nil
+	container.RemoveAll()
+	for i := range cfg.Permissions.Web.Domains {
+		p.addWebRuleRow(container, cfg, i)
+	}
+	container.Refresh()
 }
