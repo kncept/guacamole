@@ -2,6 +2,7 @@ package permissions
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -11,8 +12,12 @@ import (
 )
 
 // fakeInput returns scripted Prompt answers (denying when exhausted) and
-// records every question it was asked. A scripted config.PolicyAsk becomes
-// an "Allow this Time" answer; a scripted "" becomes a closed prompt.
+// records every question it was asked. A scripted policy selects the first
+// offered option that carries it — for a filesystem check that is the
+// value-scoped option, e.g. "Always: Always allow file". config.PolicyAsk
+// selects the one-time option (the unrecorded sentinel). Any other value
+// (including "") is returned verbatim, so a test can name a specific option
+// such as optionFileAsk.
 type fakeInput struct {
 	answers []config.Policy
 	asks    []string
@@ -25,18 +30,60 @@ func (f *fakeInput) Prompt(text string, allowFree bool, options []string) (strin
 	f.asks = append(f.asks, text)
 	f.options = append(f.options, options)
 	if len(f.answers) == 0 {
-		return optionDenyForever, nil
+		return optionFor(options, config.PolicyDeny), nil
 	}
 	answer := f.answers[0]
 	f.answers = f.answers[1:]
 	switch answer {
-	case config.PolicyAllow:
-		return optionAllowAlways, nil
-	case config.PolicyAsk:
-		return optionAllowOnce, nil
+	case config.PolicyAllow, config.PolicyDeny, config.PolicyAsk:
+		return optionFor(options, answer), nil
 	default:
 		return string(answer), nil // "" scripts a closed prompt
 	}
+}
+
+// optionFor returns the offered option the fake picks for a scripted policy.
+// config.PolicyAsk picks the one-time option rather than the explicit
+// "always ask" option; a test that wants the latter names it directly.
+func optionFor(options []string, policy config.Policy) string {
+	if policy == config.PolicyAsk {
+		for _, option := range options {
+			if option == optionDirectoryOnce || option == optionFileOnce || option == optionAllowOnce {
+				return option
+			}
+		}
+	}
+	for _, option := range options {
+		if policyOf(option) == policy {
+			return option
+		}
+	}
+	return ""
+}
+
+// policyOf reports the policy an option carries. The one-time options and
+// the explicit "always ask" options all map to config.PolicyAsk.
+func policyOf(option string) config.Policy {
+	switch option {
+	case optionDirectoryDeny, optionFileDenyFile, optionFileDenyDirectory, optionDenyForever:
+		return config.PolicyDeny
+	case optionDirectoryAllow, optionFileAllowFile, optionFileAllowDirectory, optionAllowAlways:
+		return config.PolicyAllow
+	case optionDirectoryAsk, optionFileAsk, optionDirectoryOnce, optionFileOnce, optionAllowOnce:
+		return config.PolicyAsk
+	default:
+		return ""
+	}
+}
+
+// contains reports whether want is one of the offered options.
+func contains(options []string, want string) bool {
+	for _, option := range options {
+		if option == want {
+			return true
+		}
+	}
+	return false
 }
 
 // askText formats the question the manager puts to the user input for a
@@ -155,7 +202,7 @@ func TestFilesystemAskRecordsAnswer(t *testing.T) {
 	}
 
 	wantDirs := []config.DirectoryPermission{
-		{Directory: "/home/me/notes", Read: config.PolicyAllow, Write: config.PolicyAsk},
+		{Directory: "/home/me/notes", Read: config.PolicyAllow},
 	}
 	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
 		t.Errorf("recorded directories = %v, want %v", m.config.Permissions.Filesystem.Directories, wantDirs)
@@ -211,10 +258,297 @@ func TestFilesystemBlankAnswerDenies(t *testing.T) {
 		t.Error("allowed = true, want false (closed prompt defaults to deny)")
 	}
 	wantDirs := []config.DirectoryPermission{
-		{Directory: "/tmp", Read: config.PolicyAsk, Write: config.PolicyDeny},
+		{Directory: "/tmp", Write: config.PolicyDeny},
 	}
 	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
 		t.Errorf("recorded directories = %v, want %v", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+}
+
+func TestFilesystemFileOffersFileAndDirectoryScopes(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{answers: []config.Policy{config.Policy(optionFileAllowDirectory)}}
+	m := newManager(t, input, nil)
+
+	allowed, err := m.IsAllowedPath(file, AccessRead)
+	if err != nil {
+		t.Fatalf("IsAllowedPath: %v", err)
+	}
+	if !allowed {
+		t.Fatal("read allowed = false, want true (always allow directory)")
+	}
+	if len(input.options) != 1 {
+		t.Fatalf("prompts = %v, want exactly one", input.options)
+	}
+	wantOptions := []string{
+		optionFileDenyFile,
+		optionFileDenyDirectory,
+		optionFileAsk,
+		optionFileOnce,
+		optionFileAllowFile,
+		optionFileAllowDirectory,
+	}
+	if !reflect.DeepEqual(input.options[0], wantOptions) {
+		t.Errorf("file prompt options = %v, want %v", input.options[0], wantOptions)
+	}
+
+	// "Always: Always allow directory" records the containing directory,
+	// so a sibling is covered without another prompt.
+	wantDirs := []config.DirectoryPermission{
+		{Directory: dir, Read: config.PolicyAllow},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+	if allowed, _ := m.IsAllowedPath(filepath.Join(dir, "other.txt"), AccessRead); !allowed {
+		t.Error("sibling read allowed = false, want the recorded directory grant")
+	}
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1", len(input.asks))
+	}
+}
+
+func TestFilesystemFileAllowFileRecordsOnlyThatFile(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+		t.Fatal("read allowed = false, want true (always allow file)")
+	}
+	wantDirs := []config.DirectoryPermission{
+		{Directory: file, Read: config.PolicyAllow},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+}
+
+func TestFilesystemFileDenyDirectoryRecordsParent(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{answers: []config.Policy{config.Policy(optionFileDenyDirectory)}}
+	m := newManager(t, input, nil)
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); allowed {
+		t.Error("read allowed = true, want false (always deny directory)")
+	}
+	wantDirs := []config.DirectoryPermission{
+		{Directory: dir, Read: config.PolicyDeny},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+	// The recorded directory rule covers the file too, so no second prompt.
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); allowed {
+		t.Error("second read allowed = true, want false (recorded deny)")
+	}
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1", len(input.asks))
+	}
+}
+
+func TestFilesystemFileAskRecordsAskRule(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{answers: []config.Policy{
+		config.Policy(optionFileAsk),
+		config.Policy(optionFileAsk),
+	}}
+	m := newManager(t, input, nil)
+
+	for i := 0; i < 2; i++ {
+		if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+			t.Errorf("call %d allowed = false, want true (always ask allowed after asking)", i+1)
+		}
+	}
+	wantDirs := []config.DirectoryPermission{
+		{Directory: file, Read: config.PolicyAsk},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v (always ask is recorded)", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+	if len(input.asks) != 2 {
+		t.Errorf("granter asked %d times, want 2 (an ask rule still prompts)", len(input.asks))
+	}
+}
+
+func TestFilesystemDirectoryAskRecordsAskRule(t *testing.T) {
+	dir := t.TempDir()
+	input := &fakeInput{answers: []config.Policy{
+		config.Policy(optionDirectoryAsk),
+		config.Policy(optionDirectoryAsk),
+	}}
+	m := newManager(t, input, nil)
+
+	for i := 0; i < 2; i++ {
+		if allowed, _ := m.IsAllowedPath(dir, AccessRead); !allowed {
+			t.Errorf("call %d allowed = false, want true (always ask allowed after asking)", i+1)
+		}
+	}
+	wantDirs := []config.DirectoryPermission{
+		{Directory: dir, Read: config.PolicyAsk},
+	}
+	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
+		t.Errorf("recorded directories = %v, want %v (always ask is recorded)", m.config.Permissions.Filesystem.Directories, wantDirs)
+	}
+	if len(input.asks) != 2 {
+		t.Errorf("granter asked %d times, want 2 (an ask rule still prompts)", len(input.asks))
+	}
+}
+
+func TestFilesystemFileThisTimeRecordsNothing(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{answers: []config.Policy{
+		config.Policy(optionFileOnce),
+		config.Policy(optionFileOnce),
+	}}
+	m := newManager(t, input, nil)
+
+	for i := 0; i < 2; i++ {
+		if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+			t.Errorf("call %d allowed = false, want true (this time)", i+1)
+		}
+	}
+	if len(input.asks) != 2 {
+		t.Errorf("granter asked %d times, want 2 (this time is never recorded)", len(input.asks))
+	}
+	if len(m.config.Permissions.Filesystem.Directories) != 0 {
+		t.Errorf("recorded directories = %v, want none", m.config.Permissions.Filesystem.Directories)
+	}
+}
+
+func TestFilesystemDirectoryPromptOffersDirectoryOptions(t *testing.T) {
+	dir := t.TempDir()
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
+
+	if allowed, _ := m.IsAllowedPath(dir, AccessRead); !allowed {
+		t.Fatal("read allowed = false, want true (always allow)")
+	}
+	if len(input.options) != 1 {
+		t.Fatalf("prompts = %v, want exactly one", input.options)
+	}
+	wantOptions := []string{
+		optionDirectoryDeny,
+		optionDirectoryAsk,
+		optionDirectoryOnce,
+		optionDirectoryAllow,
+	}
+	if !reflect.DeepEqual(input.options[0], wantOptions) {
+		t.Errorf("directory prompt options = %v, want %v", input.options[0], wantOptions)
+	}
+}
+
+// TestFilesystemParentResponseAvoidsPrompt checks that once a parent
+// directory has answered an access kind, checks below it use that answer
+// without asking again.
+func TestFilesystemParentResponseAvoidsPrompt(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "sub", "notes.txt")
+	if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
+		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
+			{Directory: dir, Read: config.PolicyAllow, Write: config.PolicyDeny},
+		}
+	})
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); !allowed {
+		t.Error("read allowed = false, want true (inherited parent allow)")
+	}
+	if allowed, _ := m.IsAllowedPath(file, AccessWrite); allowed {
+		t.Error("write allowed = true, want false (inherited parent deny)")
+	}
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions (parent already answered)", input.asks)
+	}
+}
+
+// TestFilesystemChildOverridesParent checks that a more specific rule wins
+// for the access kind it answered, while the other kind still inherits from
+// the parent.
+func TestFilesystemChildOverridesParent(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "notes.txt")
+	if err := os.WriteFile(file, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
+		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
+			{Directory: dir, Read: config.PolicyAllow, Write: config.PolicyAllow},
+			{Directory: file, Read: config.PolicyDeny},
+		}
+	})
+
+	if allowed, _ := m.IsAllowedPath(file, AccessRead); allowed {
+		t.Error("read allowed = true, want false (child deny overrides parent allow)")
+	}
+	if allowed, _ := m.IsAllowedPath(file, AccessWrite); !allowed {
+		t.Error("write allowed = false, want true (child did not answer write, parent allow applies)")
+	}
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions (both answers resolved from rules)", input.asks)
+	}
+}
+
+// TestFilesystemChildRuleDoesNotShadowParentOtherAccess checks that a rule
+// answering one access kind does not silently answer the other kind with an
+// ask, which would shadow the parent's response for that other kind.
+func TestFilesystemChildRuleDoesNotShadowParentOtherAccess(t *testing.T) {
+	dir := t.TempDir()
+	other := filepath.Join(dir, "other.txt")
+	if err := os.WriteFile(other, []byte("hi"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
+		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
+			{Directory: dir, Read: config.PolicyAllow},
+			{Directory: other, Write: config.PolicyAllow},
+		}
+	})
+
+	if allowed, _ := m.IsAllowedPath(other, AccessRead); !allowed {
+		t.Error("read allowed = false, want true (child write rule must not shadow parent read)")
+	}
+	if allowed, _ := m.IsAllowedPath(other, AccessWrite); !allowed {
+		t.Error("write allowed = false, want true (child write rule)")
+	}
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions", input.asks)
 	}
 }
 
@@ -406,7 +740,7 @@ func TestFilesystemRelativePathConvertedToAbsolute(t *testing.T) {
 
 	// The recorded directory should be the absolute path, not "."
 	wantDirs := []config.DirectoryPermission{
-		{Directory: absCWD, Read: config.PolicyAllow, Write: config.PolicyAsk},
+		{Directory: absCWD, Read: config.PolicyAllow},
 	}
 	if !reflect.DeepEqual(m.config.Permissions.Filesystem.Directories, wantDirs) {
 		t.Errorf("recorded directories = %v, want %v (should use absolute path, not '.')", m.config.Permissions.Filesystem.Directories, wantDirs)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/config"
 	"github.com/kncept/guacamole/permissions"
 )
 
@@ -543,9 +544,19 @@ func ListAllowedDirectories(checker AccessChecker) ai.Tool {
 				return b.String(), nil
 			}
 			for _, rule := range fs.Directories {
-				fmt.Fprintf(&b, "%s (read: %s, write: %s)\n", rule.Directory, rule.Read, rule.Write)
+				fmt.Fprintf(&b, "%s (read: %s, write: %s)\n", rule.Directory, policyLabel(rule.Read), policyLabel(rule.Write))
 			}
 			return b.String(), nil
 		},
 	}
+}
+
+// policyLabel renders a rule's policy for the model. An unset kind means the
+// rule did not answer it, so the path inherits the nearest parent rule (or
+// is asked); it would otherwise read as an empty value.
+func policyLabel(policy config.Policy) string {
+	if policy == "" {
+		return "(unset)"
+	}
+	return string(policy)
 }

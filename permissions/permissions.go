@@ -6,6 +6,7 @@ package permissions
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,12 +16,29 @@ import (
 )
 
 // The option labels offered when a permission check falls through to the
-// user. "Allow this Time" answers the current check only; "Allow Always"
-// and "Deny Forever" are recorded as the rule for that path/domain.
+// user. The filesystem category has its own labels because a file check can
+// scope each lasting answer to the file itself or to the directory that
+// contains it. Every "always" answer — including "Always ask" — is recorded
+// as a rule; "just this time" answers the current check only.
 const (
+	// Shell and web checks: one rule for the value itself.
 	optionAllowAlways = "Allow Always"
 	optionAllowOnce   = "Allow this Time"
 	optionDenyForever = "Deny Forever"
+
+	// Directory checks.
+	optionDirectoryDeny  = "Always Deny"
+	optionDirectoryAsk   = "Always ask"
+	optionDirectoryOnce  = "Just This time"
+	optionDirectoryAllow = "Always allow"
+
+	// File checks: the lasting answers can cover the file or its directory.
+	optionFileDenyFile       = "Always Deny file"
+	optionFileDenyDirectory  = "Always Deny directory"
+	optionFileAsk            = "Ask: Always ask"
+	optionFileOnce           = "This time: just this time"
+	optionFileAllowFile      = "Always: Always allow file"
+	optionFileAllowDirectory = "Always: Always allow directory"
 )
 
 func NewPermissionsManager(
@@ -49,9 +67,13 @@ const (
 
 // IsAllowedPath checks the filesystem category against path, split into the
 // requested access kind. The allow-all override wins immediately; otherwise
-// the most specific directory rule applies. Allow and deny rules are applied
-// directly; ask rules (and no matching rule at all) fall through to the user
-// input, and its answer is recorded and saved.
+// the most specific rule that answered this access kind applies. Rules that
+// only answered the other kind are skipped, so a path inherits the nearest
+// parent that answered this kind. Allow and deny rules are applied directly;
+// ask rules (and no answer at all) fall through to the user input, whose
+// answer is recorded and saved. When path is a file the prompt offers
+// scoping each lasting answer to the file or its containing directory; a
+// directory is covered as a whole.
 func (this *PermissionsManager) IsAllowedPath(path string, access AccessKind) (bool, error) {
 	// Always resolve to absolute path to handle "." and other relative paths consistently
 	absPath, err := filepath.Abs(path)
@@ -65,12 +87,10 @@ func (this *PermissionsManager) IsAllowedPath(path string, access AccessKind) (b
 		return true, nil
 	}
 
-	// Most specific matching directory wins.
-	if matching := findMatchingDirectory(filesystem.Directories, path); matching != nil {
-		policy := matching.Read
-		if access == AccessWrite {
-			policy = matching.Write
-		}
+	// The most specific rule that answered this access kind wins. A rule
+	// that only answered the other kind is skipped, so a path inherits the
+	// nearest parent that answered this kind.
+	if policy, ok := findDirectoryPolicy(filesystem.Directories, path, access); ok {
 		switch policy {
 		case config.PolicyAllow:
 			return true, nil
@@ -81,12 +101,21 @@ func (this *PermissionsManager) IsAllowedPath(path string, access AccessKind) (b
 		}
 	}
 
-	answer := this.ask(accessCategory(access), path)
-	if answer == unrecorded {
+	// A file can be allowed or denied on its own or through the directory
+	// that contains it, so its prompt offers both scopes. A directory is
+	// covered as a whole. Every answer except "just this time" records a
+	// rule (including "Always ask").
+	options := filesystemOptions(!isDirectory(path))
+	answer := this.prompt(permissionQuestion(accessCategory(access), path), options)
+	decision := interpretFilesystem(answer)
+	if decision.once {
 		return true, nil
 	}
-	this.recordDirectory(path, access, answer)
-	return answer == config.PolicyAllow, this.config.Save()
+	if decision.atDirectory {
+		path = filepath.Dir(path)
+	}
+	this.recordDirectory(path, access, decision.policy)
+	return decision.policy != config.PolicyDeny, this.config.Save()
 }
 
 // IsAllowedShellCommand checks the shell category: one allow/ask/deny
@@ -150,18 +179,13 @@ func (this *PermissionsManager) FilesystemPermissions() config.FilesystemPermiss
 // writing anything to the config.
 const unrecorded = config.PolicyAsk
 
-// ask puts one permission question to the user input. "Allow this Time"
-// allows the access without recording anything; an empty or missing answer
-// (the prompt could not be asked) defaults to deny.
+// ask puts one permission question to the user input for the shell and web
+// categories, whose answers are recorded against the value itself. "Allow
+// this Time" allows the access without recording anything; an empty or
+// missing answer (the prompt could not be asked) defaults to deny.
 func (this *PermissionsManager) ask(category string, value string) config.Policy {
-	answer, err := this.userInput.Prompt(
-		fmt.Sprintf("Allow %s access to %s?", category, value),
-		false,
-		[]string{optionAllowOnce, optionAllowAlways, optionDenyForever},
-	)
-	if err != nil || answer == "" {
-		return config.PolicyDeny
-	}
+	answer := this.prompt(permissionQuestion(category, value),
+		[]string{optionAllowOnce, optionAllowAlways, optionDenyForever})
 	switch answer {
 	case optionAllowOnce:
 		return unrecorded
@@ -172,6 +196,84 @@ func (this *PermissionsManager) ask(category string, value string) config.Policy
 	}
 }
 
+// permissionQuestion formats the prompt shown for one permission check.
+func permissionQuestion(category string, value string) string {
+	return fmt.Sprintf("Allow %s access to %s?", category, value)
+}
+
+// filesystemOptions returns the prompt options for a filesystem check. A
+// value that is (or will be) a file offers every lasting answer scoped to
+// the file or to the directory that contains it; a directory offers one
+// option per policy.
+func filesystemOptions(isFile bool) []string {
+	if isFile {
+		return []string{
+			optionFileDenyFile,
+			optionFileDenyDirectory,
+			optionFileAsk,
+			optionFileOnce,
+			optionFileAllowFile,
+			optionFileAllowDirectory,
+		}
+	}
+	return []string{
+		optionDirectoryDeny,
+		optionDirectoryAsk,
+		optionDirectoryOnce,
+		optionDirectoryAllow,
+	}
+}
+
+// filesystemDecision is the outcome of a filesystem prompt answer: the
+// policy to record and whether the rule covers the value itself or the
+// directory that contains it. once answers the current check only, without
+// recording anything.
+type filesystemDecision struct {
+	policy      config.Policy
+	once        bool
+	atDirectory bool
+}
+
+// interpretFilesystem interprets a filesystem prompt answer. Any
+// unrecognised answer — including a closed or failing prompt — denies the
+// value.
+func interpretFilesystem(answer string) filesystemDecision {
+	switch answer {
+	case optionDirectoryDeny, optionFileDenyFile:
+		return filesystemDecision{policy: config.PolicyDeny}
+	case optionFileDenyDirectory:
+		return filesystemDecision{policy: config.PolicyDeny, atDirectory: true}
+	case optionDirectoryAsk, optionFileAsk:
+		return filesystemDecision{policy: config.PolicyAsk}
+	case optionDirectoryOnce, optionFileOnce:
+		return filesystemDecision{once: true}
+	case optionDirectoryAllow, optionFileAllowFile:
+		return filesystemDecision{policy: config.PolicyAllow}
+	case optionFileAllowDirectory:
+		return filesystemDecision{policy: config.PolicyAllow, atDirectory: true}
+	default:
+		return filesystemDecision{policy: config.PolicyDeny}
+	}
+}
+
+// prompt puts one question to the user input and returns the chosen option.
+// A closed or failing prompt returns an empty answer.
+func (this *PermissionsManager) prompt(text string, options []string) string {
+	answer, err := this.userInput.Prompt(text, false, options)
+	if err != nil {
+		return ""
+	}
+	return answer
+}
+
+// isDirectory reports whether path exists and is a directory. A path that
+// does not exist yet is treated as a file: the prompt then offers scoping
+// each answer to the file or the directory that contains it.
+func isDirectory(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
 // accessCategory labels an access kind for the granter prompt.
 func accessCategory(access AccessKind) string {
 	if access == AccessWrite {
@@ -180,12 +282,12 @@ func accessCategory(access AccessKind) string {
 	return "filesystem read"
 }
 
-// findMatchingDirectory returns the rule whose Directory covers path, or nil
-// when no rule matches. The longest (most specific) Directory wins.
-func findMatchingDirectory(rules []config.DirectoryPermission, path string) *config.DirectoryPermission {
-	if len(rules) == 0 {
-		return nil
-	}
+// findDirectoryPolicy returns the response for the requested access kind
+// from the most specific rule that answered that kind. A rule that only
+// answered the other kind is skipped, so path inherits the nearest ancestor
+// that answered this kind. ok is false when no rule answered this kind,
+// which means "ask". The longest (most specific) Directory wins.
+func findDirectoryPolicy(rules []config.DirectoryPermission, path string, access AccessKind) (config.Policy, bool) {
 	sorted := make([]config.DirectoryPermission, len(rules))
 	copy(sorted, rules)
 	sort.SliceStable(sorted, func(i, j int) bool {
@@ -193,11 +295,18 @@ func findMatchingDirectory(rules []config.DirectoryPermission, path string) *con
 	})
 
 	for i := range sorted {
-		if pathCovers(sorted[i].Directory, path) {
-			return &sorted[i]
+		if !pathCovers(sorted[i].Directory, path) {
+			continue
+		}
+		policy := sorted[i].Read
+		if access == AccessWrite {
+			policy = sorted[i].Write
+		}
+		if policy != "" {
+			return policy, true
 		}
 	}
-	return nil
+	return "", false
 }
 
 // pathCovers reports whether a directory rule covers path. "*" and "" cover
@@ -252,8 +361,10 @@ func normalizeDomain(domain string) string {
 	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(domain), "*."))
 }
 
-// recordDirectory inserts or updates the rule for the exact path/policy
-// pair, then stores the updated slice back on the config.
+// recordDirectory inserts or updates the rule for the exact path, setting
+// only the requested access kind. The other kind is left unset (or kept as
+// it was), so the path inherits a parent's response for it instead of
+// silently overriding it with an ask.
 func (this *PermissionsManager) recordDirectory(path string, access AccessKind, policy config.Policy) {
 	directories := this.config.Permissions.Filesystem.Directories
 	for i := range directories {
@@ -267,7 +378,7 @@ func (this *PermissionsManager) recordDirectory(path string, access AccessKind, 
 			return
 		}
 	}
-	rule := config.DirectoryPermission{Directory: path, Read: config.PolicyAsk, Write: config.PolicyAsk}
+	rule := config.DirectoryPermission{Directory: path}
 	if access == AccessWrite {
 		rule.Write = policy
 	} else {

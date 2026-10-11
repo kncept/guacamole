@@ -320,6 +320,22 @@ func TestListAllowedDirectoriesAllowAll(t *testing.T) {
 	}
 }
 
+func TestListAllowedDirectoriesShowsUnsetRuleAccess(t *testing.T) {
+	checker := &fakeChecker{fs: config.FilesystemPermissions{
+		Directories: []config.DirectoryPermission{
+			{Directory: "/home/me/notes", Read: config.PolicyAllow},
+		},
+	}}
+
+	out, err := run(t, ListAllowedDirectories(checker).Handler, `{}`)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if !strings.Contains(out, "/home/me/notes (read: allow, write: (unset))") {
+		t.Errorf("output should show the unset write kind, got:\n%s", out)
+	}
+}
+
 func TestReadFileDenied(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "secret.txt")
 	if err := os.WriteFile(p, []byte("secret"), 0o644); err != nil {
