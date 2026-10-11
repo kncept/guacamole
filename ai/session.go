@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"github.com/kncept/guacamole/userinput"
 )
 
 // DefaultMaxToolRounds is the default bound on tool-call rounds in one Say.
@@ -53,6 +55,12 @@ type Session struct {
 	// before giving up. Zero uses DefaultMaxToolRounds.
 	MaxToolRounds int
 
+	// UserInput asks the user for a decision when a Say reaches
+	// MaxToolRounds and the model still requests tool calls: it is prompted
+	// to keep going or abort the turn. When nil, Say always stops with the
+	// round-limit error.
+	UserInput userinput.RequestForegroundUserInput
+
 	messages []Message
 }
 
@@ -88,7 +96,8 @@ func newSessionID() string {
 // If the reply requests tool calls, Say executes them, appends the calls
 // and their results to the history, and runs the conversation again —
 // repeating until the model answers without tool calls, up to MaxToolRounds
-// rounds.
+// rounds. When that limit is hit, UserInput (if set) lets the user decide
+// whether to keep going or stop; without it Say aborts with an error.
 //
 // If a run fails, the history keeps everything up to the last successful
 // round, so a failed turn can be retried (or abandoned) without corrupting
@@ -127,11 +136,24 @@ func (this *Session) Say(ctx context.Context, prompt string) (Response, error) {
 		if len(calls) == 0 {
 			return resp, nil
 		}
-		// TODO: Make this a user input operation
-		// where the user has the option to abort (as already happens) or
-		// to reset rounds and contune
 		if round >= maxRounds {
-			return resp, fmt.Errorf("ai: stopped after %d tool rounds", maxRounds)
+			// The limit was reached but the model still wants tools. By
+			// default Say gives up; UserInput hands the decision to the
+			// user instead. A "Continue" answer resets the round count and
+			// keeps going, any other answer (or a prompt error) aborts
+			// with the usual round-limit error.
+			if this.UserInput == nil {
+				return resp, fmt.Errorf("ai: stopped after %d tool rounds", maxRounds)
+			}
+			answer, err := this.UserInput.Prompt(
+				fmt.Sprintf("The model has used %d rounds of tool calls and is requesting more", round),
+				false,
+				[]string{"Continue", "Abort"},
+			)
+			if err != nil || answer != "Continue" {
+				return resp, fmt.Errorf("ai: stopped after %d tool rounds", maxRounds)
+			}
+			round = -1 // continue: the loop's round++ makes the next round 0
 		}
 		for _, call := range calls {
 			history = append(history, this.execute(ctx, call))

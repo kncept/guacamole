@@ -17,6 +17,7 @@ import (
 	"github.com/kncept/guacamole/permissions"
 	"github.com/kncept/guacamole/roles/definitions"
 	"github.com/kncept/guacamole/tools"
+	"github.com/kncept/guacamole/userinput"
 )
 
 // sessionTab bundles a chat session with its tab item and the tab container
@@ -107,9 +108,10 @@ func (st *sessionTab) session() *ai.Session {
 		loop.Stream = true
 		sess := ai.NewSession(loop)
 		sess.Model = st.selectedModel().ModelID
-		granter := &guiGranter{tab: st}
-		manager := permissions.NewPermissionsManager(st.guac.config, granter)
-		sess.Tools = st.tracedTools(tools.AllTools(manager, &guiQuestionHandler{tab: st}))
+		userInput := &guiUserInput{tab: st}
+		sess.UserInput = userInput
+		manager := permissions.NewPermissionsManager(st.guac.config, userInput)
+		sess.Tools = st.tracedTools(tools.AllTools(manager, userInput))
 		st.chat.session = sess
 	}
 	return st.chat.session
@@ -182,93 +184,44 @@ func (st *sessionTab) selectedModel() config.ModelOption {
 	return config.ModelOption{}
 }
 
-// guiGranter implements permissions.PermissionGranter by showing buttons in
+// guiUserInput asks the user a question by showing the options as buttons in
 // place of the session's input box. The caller is blocked until the user
-// picks a policy, then the input box is restored. AskForAccess runs in the
-// session's goroutine (never the UI thread), so the UI updates are
-// marshalled with DoAndWait: the prompt must be shown before the wait for
-// the answer, and the restore must be done before the next tool call reads
-// inputBoxArea.
-type guiGranter struct {
+// answers, then the input box is restored. Prompt runs in the session's
+// goroutine (never the UI thread), so the UI updates are marshalled with
+// DoAndWait: the prompt must be shown before the wait for the answer, and the
+// restore must be done before the next tool call reads inputBoxArea. It
+// serves every foreground user prompt — permission checks, the model's
+// user_question tool, and tool-round-limit decisions.
+type guiUserInput struct {
 	tab *sessionTab
 }
 
-// AskForAccess shows the category and value being checked and returns the
-// user's policy. category names the permission category ("filesystem write",
-// "shell", "web"); value is the path, command or domain.
-func (g *guiGranter) AskForAccess(category string, value string) config.Policy {
-	if g.tab == nil {
-		return config.PolicyDeny
-	}
-	answer := make(chan config.Policy, 1)
-	fmt.Printf("[Permission] %s access to %s\n", category, value)
+var _ userinput.RequestForegroundUserInput = (*guiUserInput)(nil)
 
-	original := g.tab.inputBoxArea
-	fyne.DoAndWait(func() {
-		// Show what is being asked for, not just the buttons to answer it.
-		prompt := widget.NewLabel(fmt.Sprintf("Allow %s access to %s?", category, value))
-		prompt.Importance = widget.HighImportance
-		// A late second click must not block the UI thread, so extra
-		// answers are dropped once the first one was given.
-		respond := func(policy config.Policy) func() {
-			return func() {
-				select {
-				case answer <- policy:
-				default:
-				}
-			}
-		}
-		denyBtn := widget.NewButton("Deny Forever", respond(config.PolicyDeny))
-		thisTimeBtn := widget.NewButton("Allow this Time", respond(config.PolicyAllow))
-		alwaysBtn := widget.NewButton("Allow Always", respond(config.PolicyAllow))
-		g.tab.inputBoxArea = container.NewVBox(prompt, container.NewHBox(denyBtn, thisTimeBtn, alwaysBtn))
-		g.tab.updateInput()
-	})
-	p := <-answer
-	fyne.DoAndWait(func() {
-		g.tab.inputBoxArea = original
-		g.tab.updateInput()
-	})
-	return p
-}
-
-// updateInput rebuilds the tab so the new inputBoxArea is displayed.
-func (st *sessionTab) updateInput() {
-	st.guac.updateTab(st)
-}
-
-// guiQuestionHandler implements tools.UserQuestionCallbackHandler by showing
-// the question's suggested responses as buttons in place of the session's
-// input box. The caller is blocked until the user answers, then the input box
-// is restored. UserQuestionCallback runs in the session's goroutine (never
-// the UI thread), so the UI updates are marshalled with DoAndWait, for the
-// same reasons as guiGranter.AskForAccess.
-type guiQuestionHandler struct {
-	tab *sessionTab
-}
-
-func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []string, allowFreetext bool) (string, error) {
+func (g *guiUserInput) Prompt(text string, allowFree bool, options []string) (string, error) {
 	if g.tab == nil {
 		return "", fmt.Errorf("no session tab to ask the question in")
 	}
 	answer := make(chan string, 1)
-	fmt.Printf("[Question] %s\n", question)
+	fmt.Printf("[UserInput] %s\n", text)
 
 	original := g.tab.inputBoxArea
 	fyne.DoAndWait(func() {
-		row := container.NewHBox(widget.NewLabel(question))
-		for _, response := range responses {
+		row := container.NewVBox(widget.NewLabel(text))
+		buttons := container.NewHBox()
+		for _, option := range options {
 			// Late clicks after an answer was already given must not
 			// block the UI, so extra sends are dropped.
-			option := response
-			row.Add(widget.NewButton(option, func() {
+			choice := option
+			buttons.Add(widget.NewButton(choice, func() {
 				select {
-				case answer <- option:
+				case answer <- choice:
 				default:
 				}
 			}))
 		}
-		if allowFreetext {
+		row.Add(buttons)
+		if allowFree {
 			entry := widget.NewEntry()
 			entry.OnSubmitted = func(text string) {
 				text = strings.TrimSpace(text)
@@ -291,6 +244,11 @@ func (g *guiQuestionHandler) UserQuestionCallback(question string, responses []s
 		g.tab.updateInput()
 	})
 	return a, nil
+}
+
+// updateInput rebuilds the tab so the new inputBoxArea is displayed.
+func (st *sessionTab) updateInput() {
+	st.guac.updateTab(st)
 }
 
 // inputBox builds the session's input area: a multi-line entry with a submit

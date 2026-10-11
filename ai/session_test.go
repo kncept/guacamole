@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"testing"
+
+	"github.com/kncept/guacamole/userinput"
 )
 
 // recordingProvider captures every request it receives and replies with a
@@ -274,6 +277,110 @@ func TestSessionToolRoundLimit(t *testing.T) {
 	// tripped the limit: user + 3 calls + 2 results.
 	if got := len(session.Messages()); got != 6 {
 		t.Errorf("len(Messages()) = %d, want 6", got)
+	}
+}
+
+// toolCallResponse builds a scripted response that requests one echo call.
+func toolCallResponse() Response {
+	return Response{Messages: []Message{
+		{Role: RoleAssistant, Name: "echo", ToolCallID: "call-1", ToolArguments: `{}`},
+	}, Finished: true}
+}
+
+// scriptedInput answers Prompt with scripted responses ("" when exhausted),
+// recording every prompt it was shown.
+type scriptedInput struct {
+	answers []string
+	prompts []string
+	options [][]string
+}
+
+var _ userinput.RequestForegroundUserInput = (*scriptedInput)(nil)
+
+func (s *scriptedInput) Prompt(text string, allowFree bool, options []string) (string, error) {
+	s.prompts = append(s.prompts, text)
+	s.options = append(s.options, options)
+	if len(s.answers) == 0 {
+		return "", nil
+	}
+	answer := s.answers[0]
+	s.answers = s.answers[1:]
+	return answer, nil
+}
+
+func TestSessionToolRoundLimitResumeByUser(t *testing.T) {
+	provider := &scriptedProvider{responses: []Response{
+		toolCallResponse(), toolCallResponse(), toolCallResponse(), toolCallResponse(),
+		{Text: "done", Finished: true},
+	}}
+
+	echo := Tool{
+		Name:    "echo",
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) { return "out", nil },
+	}
+
+	session := NewSession(NewLoop(provider))
+	session.Tools = []Tool{echo}
+	session.MaxToolRounds = 2
+	// The user keeps granting extensions, so the model is allowed to work
+	// past the limit until it finally answers.
+	input := &scriptedInput{answers: []string{"Continue"}}
+	session.UserInput = input
+
+	resp, err := session.Say(context.Background(), "go")
+	if err != nil {
+		t.Fatalf("Say: %v", err)
+	}
+	if resp.Text != "done" {
+		t.Errorf("Text = %q, want %q", resp.Text, "done")
+	}
+	// user + 4 tool calls + 4 results + the final answer.
+	if got := len(session.Messages()); got != 10 {
+		t.Errorf("len(Messages()) = %d, want 10", got)
+	}
+	if len(input.prompts) != 1 {
+		t.Fatalf("user was prompted %d times, want 1", len(input.prompts))
+	}
+	if want := []string{"Continue", "Abort"}; !reflect.DeepEqual(input.options[0], want) {
+		t.Errorf("options = %v, want %v", input.options[0], want)
+	}
+}
+
+func TestSessionToolRoundLimitAbortAfterResume(t *testing.T) {
+	provider := &scriptedProvider{responses: []Response{
+		toolCallResponse(), toolCallResponse(), toolCallResponse(),
+		toolCallResponse(), toolCallResponse(), toolCallResponse(),
+		{Text: "done", Finished: true},
+	}}
+
+	echo := Tool{
+		Name:    "echo",
+		Handler: func(ctx context.Context, args json.RawMessage) (string, error) { return "out", nil },
+	}
+
+	session := NewSession(NewLoop(provider))
+	session.Tools = []Tool{echo}
+	session.MaxToolRounds = 2
+	// The user grants exactly one extension, then aborts on the next limit.
+	input := &scriptedInput{answers: []string{"Continue", "Abort"}}
+	session.UserInput = input
+
+	if _, err := session.Say(context.Background(), "go"); err == nil {
+		t.Fatal("Say: expected a tool round limit error, got nil")
+	}
+	if len(input.prompts) != 2 {
+		t.Fatalf("user was prompted %d times, want 2", len(input.prompts))
+	}
+	// Both prompts ask about the same completed round count.
+	for i, text := range input.prompts {
+		if want := "The model has used 2 rounds of tool calls and is requesting more"; text != want {
+			t.Errorf("prompt[%d] = %q, want %q", i, text, want)
+		}
+	}
+	// The granted extension ran three more tool rounds, then the second
+	// limit aborted: user + 5 tool calls + 4 results + the 6th call.
+	if got := len(session.Messages()); got != 12 {
+		t.Errorf("len(Messages()) = %d, want 12", got)
 	}
 }
 

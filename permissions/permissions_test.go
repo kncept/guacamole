@@ -1,33 +1,53 @@
 package permissions
 
 import (
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
 
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/userinput"
 )
 
-// fakeGranter returns scripted answers (defaulting to deny when exhausted)
-// and records every question it was asked.
-type fakeGranter struct {
+// fakeInput returns scripted Prompt answers (denying when exhausted) and
+// records every question it was asked. A scripted config.PolicyAsk becomes
+// an "Allow this Time" answer; a scripted "" becomes a closed prompt.
+type fakeInput struct {
 	answers []config.Policy
-	asks    [][2]string
+	asks    []string
+	options [][]string
 }
 
-func (g *fakeGranter) AskForAccess(category string, value string) config.Policy {
-	g.asks = append(g.asks, [2]string{category, value})
-	if len(g.answers) == 0 {
-		return config.PolicyDeny
+var _ userinput.RequestForegroundUserInput = (*fakeInput)(nil)
+
+func (f *fakeInput) Prompt(text string, allowFree bool, options []string) (string, error) {
+	f.asks = append(f.asks, text)
+	f.options = append(f.options, options)
+	if len(f.answers) == 0 {
+		return optionDenyForever, nil
 	}
-	answer := g.answers[0]
-	g.answers = g.answers[1:]
-	return answer
+	answer := f.answers[0]
+	f.answers = f.answers[1:]
+	switch answer {
+	case config.PolicyAllow:
+		return optionAllowAlways, nil
+	case config.PolicyAsk:
+		return optionAllowOnce, nil
+	default:
+		return string(answer), nil // "" scripts a closed prompt
+	}
+}
+
+// askText formats the question the manager puts to the user input for a
+// permission check.
+func askText(category, value string) string {
+	return fmt.Sprintf("Allow %s access to %s?", category, value)
 }
 
 // newManager builds a manager over a fresh config in a temp HOME (so Save
 // never touches the real ~/.guac), then applies tweak to the config.
-func newManager(t *testing.T, granter PermissionGranter, tweak func(*config.GConfig)) *PermissionsManager {
+func newManager(t *testing.T, input userinput.RequestForegroundUserInput, tweak func(*config.GConfig)) *PermissionsManager {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	cfg, err := config.Load()
@@ -37,12 +57,12 @@ func newManager(t *testing.T, granter PermissionGranter, tweak func(*config.GCon
 	if tweak != nil {
 		tweak(cfg)
 	}
-	return NewPermissionsManager(cfg, granter)
+	return NewPermissionsManager(cfg, input)
 }
 
 func TestFilesystemAllowAllOverridesRules(t *testing.T) {
-	granter := &fakeGranter{}
-	m := newManager(t, granter, func(cfg *config.GConfig) {
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
 		cfg.Permissions.Filesystem.AllowAll = true
 		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
 			{Directory: "/etc", Read: config.PolicyDeny, Write: config.PolicyDeny},
@@ -58,14 +78,14 @@ func TestFilesystemAllowAllOverridesRules(t *testing.T) {
 			t.Errorf("access %v allowed = false, want true (allow-all override)", access)
 		}
 	}
-	if len(granter.asks) != 0 {
-		t.Errorf("granter asked %v, want no questions", granter.asks)
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions", input.asks)
 	}
 }
 
 func TestFilesystemDirectoryRules(t *testing.T) {
-	granter := &fakeGranter{}
-	m := newManager(t, granter, func(cfg *config.GConfig) {
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
 		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
 			{Directory: "/tmp", Read: config.PolicyAllow, Write: config.PolicyAllow},
 			{Directory: "/etc", Read: config.PolicyDeny, Write: config.PolicyDeny},
@@ -93,14 +113,14 @@ func TestFilesystemDirectoryRules(t *testing.T) {
 			t.Errorf("IsAllowedPath(%s, %v) = %v, want %v", c.path, c.access, allowed, c.want)
 		}
 	}
-	if len(granter.asks) != 1 {
-		t.Errorf("granter asked %v, want exactly one question (for /tmpfoo)", granter.asks)
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %v, want exactly one question (for /tmpfoo)", input.asks)
 	}
 }
 
 func TestFilesystemMostSpecificRuleWins(t *testing.T) {
-	granter := &fakeGranter{}
-	m := newManager(t, granter, func(cfg *config.GConfig) {
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
 		cfg.Permissions.Filesystem.Directories = []config.DirectoryPermission{
 			{Directory: "/project", Read: config.PolicyAllow, Write: config.PolicyAllow},
 			{Directory: "/project/secret", Read: config.PolicyDeny, Write: config.PolicyDeny},
@@ -114,14 +134,14 @@ func TestFilesystemMostSpecificRuleWins(t *testing.T) {
 	if allowed {
 		t.Error("read of /project/secret/keys.pem allowed = true, want false (more specific rule)")
 	}
-	if len(granter.asks) != 0 {
-		t.Errorf("granter asked %v, want no questions", granter.asks)
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions", input.asks)
 	}
 }
 
 func TestFilesystemAskRecordsAnswer(t *testing.T) {
-	granter := &fakeGranter{answers: []config.Policy{config.PolicyAllow}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
 
 	allowed, err := m.IsAllowedPath("/home/me/notes", AccessRead)
 	if err != nil {
@@ -130,8 +150,8 @@ func TestFilesystemAskRecordsAnswer(t *testing.T) {
 	if !allowed {
 		t.Fatal("read allowed = false, want true (granter allowed)")
 	}
-	if want := [2]string{"filesystem read", "/home/me/notes"}; len(granter.asks) != 1 || granter.asks[0] != want {
-		t.Errorf("granter asks = %v, want [%v]", granter.asks, want)
+	if want := askText("filesystem read", "/home/me/notes"); len(input.asks) != 1 || input.asks[0] != want {
+		t.Errorf("granter asks = %v, want [%v]", input.asks, want)
 	}
 
 	wantDirs := []config.DirectoryPermission{
@@ -153,14 +173,14 @@ func TestFilesystemAskRecordsAnswer(t *testing.T) {
 	if allowed {
 		t.Error("write allowed = true, want false (write is still ask, granter denies)")
 	}
-	if want := [2]string{"filesystem write", "/home/me/notes"}; len(granter.asks) != 2 || granter.asks[1] != want {
-		t.Errorf("granter asks = %v, want the write question second", granter.asks)
+	if want := askText("filesystem write", "/home/me/notes"); len(input.asks) != 2 || input.asks[1] != want {
+		t.Errorf("granter asks = %v, want the write question second", input.asks)
 	}
 }
 
 func TestFilesystemAskAnswerAllowsOnceWithoutRecording(t *testing.T) {
-	granter := &fakeGranter{answers: []config.Policy{config.PolicyAsk, config.PolicyAsk}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{config.PolicyAsk, config.PolicyAsk}}
+	m := newManager(t, input, nil)
 
 	for i := 0; i < 2; i++ {
 		allowed, err := m.IsAllowedPath("/tmp", AccessRead)
@@ -171,8 +191,8 @@ func TestFilesystemAskAnswerAllowsOnceWithoutRecording(t *testing.T) {
 			t.Errorf("call %d allowed = false, want true (allow this time)", i+1)
 		}
 	}
-	if len(granter.asks) != 2 {
-		t.Errorf("granter asked %d times, want 2 (an ask answer is never recorded)", len(granter.asks))
+	if len(input.asks) != 2 {
+		t.Errorf("granter asked %d times, want 2 (an ask answer is never recorded)", len(input.asks))
 	}
 	if len(m.config.Permissions.Filesystem.Directories) != 0 {
 		t.Errorf("recorded directories = %v, want none", m.config.Permissions.Filesystem.Directories)
@@ -180,8 +200,8 @@ func TestFilesystemAskAnswerAllowsOnceWithoutRecording(t *testing.T) {
 }
 
 func TestFilesystemBlankAnswerDenies(t *testing.T) {
-	granter := &fakeGranter{answers: []config.Policy{""}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{""}}
+	m := newManager(t, input, nil)
 
 	allowed, err := m.IsAllowedPath("/tmp", AccessWrite)
 	if err != nil {
@@ -199,9 +219,9 @@ func TestFilesystemBlankAnswerDenies(t *testing.T) {
 }
 
 func TestShellPolicyIsGeneric(t *testing.T) {
-	granter := &fakeGranter{}
+	input := &fakeInput{}
 	for _, policy := range []config.Policy{config.PolicyAllow, config.PolicyDeny} {
-		m := newManager(t, granter, func(cfg *config.GConfig) {
+		m := newManager(t, input, func(cfg *config.GConfig) {
 			cfg.Permissions.Shell.Policy = policy
 		})
 
@@ -213,14 +233,14 @@ func TestShellPolicyIsGeneric(t *testing.T) {
 			t.Errorf("policy %q: allowed = %v", policy, allowed)
 		}
 	}
-	if len(granter.asks) != 0 {
-		t.Errorf("granter asked %v, want no questions for a settled policy", granter.asks)
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions for a settled policy", input.asks)
 	}
 }
 
 func TestShellAskRecordsAnswerForAllCommands(t *testing.T) {
-	granter := &fakeGranter{answers: []config.Policy{config.PolicyAllow}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
 
 	allowed, err := m.IsAllowedShellCommand("ls -la")
 	if err != nil {
@@ -229,8 +249,8 @@ func TestShellAskRecordsAnswerForAllCommands(t *testing.T) {
 	if !allowed {
 		t.Fatal("allowed = false, want true (granter allowed)")
 	}
-	if want := [2]string{"shell", "ls -la"}; len(granter.asks) != 1 || granter.asks[0] != want {
-		t.Errorf("granter asks = %v, want [%v]", granter.asks, want)
+	if want := askText("shell", "ls -la"); len(input.asks) != 1 || input.asks[0] != want {
+		t.Errorf("granter asks = %v, want [%v]", input.asks, want)
 	}
 	if m.config.Permissions.Shell.Policy != config.PolicyAllow {
 		t.Errorf("shell policy = %q, want the recorded %q", m.config.Permissions.Shell.Policy, config.PolicyAllow)
@@ -240,14 +260,14 @@ func TestShellAskRecordsAnswerForAllCommands(t *testing.T) {
 	if allowed, _ := m.IsAllowedShellCommand("anything at all"); !allowed {
 		t.Error("second command allowed = false, want the recorded policy")
 	}
-	if len(granter.asks) != 1 {
-		t.Errorf("granter asked %d times, want 1", len(granter.asks))
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1", len(input.asks))
 	}
 }
 
 func TestWebAllowAllOverridesRules(t *testing.T) {
-	granter := &fakeGranter{}
-	m := newManager(t, granter, func(cfg *config.GConfig) {
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
 		cfg.Permissions.Web.AllowAll = true
 		cfg.Permissions.Web.Domains = []config.DomainPermission{
 			{Domain: "evil.example", Policy: config.PolicyDeny},
@@ -261,14 +281,14 @@ func TestWebAllowAllOverridesRules(t *testing.T) {
 	if !allowed {
 		t.Error("allowed = false, want true (allow-all override)")
 	}
-	if len(granter.asks) != 0 {
-		t.Errorf("granter asked %v, want no questions", granter.asks)
+	if len(input.asks) != 0 {
+		t.Errorf("granter asked %v, want no questions", input.asks)
 	}
 }
 
 func TestWebDomainRules(t *testing.T) {
-	granter := &fakeGranter{}
-	m := newManager(t, granter, func(cfg *config.GConfig) {
+	input := &fakeInput{}
+	m := newManager(t, input, func(cfg *config.GConfig) {
 		cfg.Permissions.Web.Domains = []config.DomainPermission{
 			{Domain: "example.com", Policy: config.PolicyAllow},
 			{Domain: "blocked.example", Policy: config.PolicyDeny},
@@ -294,19 +314,19 @@ func TestWebDomainRules(t *testing.T) {
 			t.Errorf("IsAllowedDomain(%s) = %v, want %v", c.domain, allowed, c.want)
 		}
 	}
-	if len(granter.asks) != 2 {
-		t.Errorf("granter asks = %v, want one question per uncovered domain", granter.asks)
+	if len(input.asks) != 2 {
+		t.Errorf("granter asks = %v, want one question per uncovered domain", input.asks)
 	}
-	for i, want := range [][2]string{{"web", "notexample.com"}, {"web", "unknown.example"}} {
-		if granter.asks[i] != want {
-			t.Errorf("granter ask %d = %v, want %v", i, granter.asks[i], want)
+	for i, want := range []string{askText("web", "notexample.com"), askText("web", "unknown.example")} {
+		if input.asks[i] != want {
+			t.Errorf("input ask %d = %v, want %v", i, input.asks[i], want)
 		}
 	}
 }
 
 func TestWebAskRecordsDomain(t *testing.T) {
-	granter := &fakeGranter{answers: []config.Policy{config.PolicyAllow}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
 
 	if allowed, _ := m.IsAllowedDomain("docs.example.org"); !allowed {
 		t.Fatal("allowed = false, want true (granter allowed)")
@@ -319,8 +339,8 @@ func TestWebAskRecordsDomain(t *testing.T) {
 	if allowed, _ := m.IsAllowedDomain("docs.example.org"); !allowed {
 		t.Error("second check allowed = false, want the recorded grant")
 	}
-	if len(granter.asks) != 1 {
-		t.Errorf("granter asked %d times, want 1", len(granter.asks))
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1", len(input.asks))
 	}
 }
 
@@ -331,7 +351,7 @@ func TestFilesystemPermissionsAccessor(t *testing.T) {
 			{Directory: "/tmp", Read: config.PolicyAllow, Write: config.PolicyDeny},
 		},
 	}
-	m := newManager(t, &fakeGranter{}, func(cfg *config.GConfig) {
+	m := newManager(t, &fakeInput{}, func(cfg *config.GConfig) {
 		cfg.Permissions.Filesystem = want
 	})
 
@@ -366,8 +386,8 @@ func TestDomainCovers(t *testing.T) {
 func TestFilesystemRelativePathConvertedToAbsolute(t *testing.T) {
 	// This test verifies that relative paths (like ".") are resolved to absolute paths
 	// before checking permissions and recording decisions.
-	granter := &fakeGranter{answers: []config.Policy{config.PolicyAllow}}
-	m := newManager(t, granter, nil)
+	input := &fakeInput{answers: []config.Policy{config.PolicyAllow}}
+	m := newManager(t, input, nil)
 
 	// Get the current working directory as absolute path
 	absCWD, err := filepath.Abs(".")
@@ -400,7 +420,7 @@ func TestFilesystemRelativePathConvertedToAbsolute(t *testing.T) {
 	if !allowed {
 		t.Error("second read with absolute path allowed = false, want true")
 	}
-	if len(granter.asks) != 1 {
-		t.Errorf("granter asked %d times, want 1 (second call should use recorded rule)", len(granter.asks))
+	if len(input.asks) != 1 {
+		t.Errorf("granter asked %d times, want 1 (second call should use recorded rule)", len(input.asks))
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"github.com/kncept/guacamole/ai"
 	"github.com/kncept/guacamole/config"
 	"github.com/kncept/guacamole/permissions"
+	"github.com/kncept/guacamole/userinput"
 )
 
 // AccessChecker is the subset of PermissionsManager used by the tools. Each
@@ -24,15 +25,15 @@ type AccessChecker interface {
 
 // AllTools returns every built-in tool. Pass a non-nil checker to enforce
 // permissions; a nil checker allows everything. The user_question tool is
-// only included when a non-nil callbackHandler is given, because the question
+// only included when a non-nil userInput is given, because the question
 // cannot be asked without a handler to ask it.
-func AllTools(checker AccessChecker, callbackHandler UserQuestionCallbackHandler) []ai.Tool {
+func AllTools(checker AccessChecker, userInput userinput.RequestForegroundUserInput) []ai.Tool {
 	tools := make([]ai.Tool, 0)
 	tools = append(tools, FileSystem(checker)...)
 	tools = append(tools, Console(checker)...)
 	tools = append(tools, Web(checker)...)
-	if callbackHandler != nil {
-		tools = append(tools, User(callbackHandler)...)
+	if userInput != nil {
+		tools = append(tools, User(userInput)...)
 	}
 
 	// time : current user time && convert time zone && perhaps ntp time?

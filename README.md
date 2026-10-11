@@ -85,13 +85,15 @@ resp, err := loop.Run(ctx, ai.Request{Prompt: "hello"})
 - `ai.Provider` — `Send` (one-shot) and `SendStream` (per-chunk callback that can abort mid-stream).
 - `ai.Processor` — transforms or validates the final `Response`; may fail the attempt, which the loop then retries.
 - `ai.Loop` — `Run` executes request → processing → response, retrying transient failures and never retrying a cancelled context or an aborted stream.
-- `ai.Session` — a stateful conversation on top of a `Loop`: `Say` appends each user message to the history, sends the whole conversation, and records the reply. Failed turns leave the history untouched; `Clear` starts over. Every session has a random ID, and `sessionstore` saves/loads sessions as JSON files (`<dir>/<session ID>.json`).
-- `ai.Tool` — a function the model can call: name, description, JSON Schema parameters, and a `ToolHandler`. When a response requests tool calls, `Say` executes them, appends the calls and results to the history, and runs again until the model answers — up to `MaxToolRounds`. Handler errors become tool results so the model can recover. The `tools` package provides the filesystem tools (`read_file`, `ls`, `write_file`, `glob`, `edit_file`, `create_directory`, `move_file`, `list_allowed_directories`), one shell tool per installed shell, and `http_fetch`; the `permissions` package enforces them through the three permission categories (filesystem, shell, web) persisted in `~/.guac/config.json`.
+- `ai.Session` — a stateful conversation on top of a `Loop`: `Say` appends each user message to the history, sends the whole conversation, and records the reply. Failed turns leave the history untouched; `Clear` starts over. A `UserInput` (a `userinput.RequestForegroundUserInput`) decides what happens when a model keeps calling tools past `MaxToolRounds`. Every session has a random ID, and `sessionstore` saves/loads sessions as JSON files (`<dir>/<session ID>.json`).
+- `ai.Tool` — a function the model can call: name, description, JSON Schema parameters, and a `ToolHandler`. When a response requests tool calls, `Say` executes them, appends the calls and results to the history, and runs again until the model answers — up to `MaxToolRounds`, after which the session's `UserInput` prompts the user to reset the round count and keep going, or abort. Handler errors become tool results so the model can recover. The `tools` package provides the filesystem tools (`read_file`, `ls`, `write_file`, `glob`, `edit_file`, `create_directory`, `move_file`, `list_allowed_directories`), one shell tool per installed shell, and `http_fetch`; the `permissions` package enforces them through the three permission categories (filesystem, shell, web) persisted in `~/.guac/config.json`.
 - Hooks: `OnRequest`, `OnChunk`, `OnResponse`, `OnError` for logging, debugging, and UIs.
+- `userinput.RequestForegroundUserInput` — the single interface behind every foreground user prompt: permission checks, the model's `user_question` tool, and tool-round-limit decisions. Its `Prompt(text, allowFree, options)` renders the question (GUI buttons, terminal menu) and returns the chosen option or free text.
 
 ```go
 session := ai.NewSession(loop)
-session.Tools = tools.AllTools(nil, nil) // nil checker allows everything; nil handler omits user_question
+session.UserInput = userInput // a userinput.RequestForegroundUserInput
+session.Tools = tools.AllTools(nil, nil) // nil checker allows everything; nil userInput omits user_question
 session.Say(ctx, "my name is Ada")
 resp, _ := session.Say(ctx, "what is my name?") // the model remembers: history is sent with every turn
 ```

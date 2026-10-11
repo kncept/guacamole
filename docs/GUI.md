@@ -97,6 +97,13 @@ the model is done.
 Permission checks apply as in the CLI: when a call needs approval, the input
 area is replaced with the question and Allow/Deny buttons until you answer.
 
+The same prompt mechanism backs the model's `user_question` tool and the
+tool-round limit: whenever the app needs a foreground answer, the input area
+is swapped for the question, its options as buttons (plus a free-text entry
+when allowed), and the session blocks until you answer. When the model keeps
+requesting tool calls past the session's round limit, the buttons are
+**Continue** and **Abort**.
+
 ---
 
 ## Menu

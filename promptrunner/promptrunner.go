@@ -16,6 +16,7 @@ import (
 	"github.com/kncept/guacamole/modelclient"
 	"github.com/kncept/guacamole/sessionstore"
 	"github.com/kncept/guacamole/tools"
+	"github.com/kncept/guacamole/userinput"
 )
 
 type PromptRunner interface {
@@ -35,12 +36,12 @@ type PromptRunner interface {
 }
 
 type promptRunner struct {
-	loop            *ai.Loop
-	model           string
-	session         *ai.Session
-	sessionsDir     string
-	checker         tools.AccessChecker
-	questionHandler tools.UserQuestionCallbackHandler
+	loop        *ai.Loop
+	model       string
+	session     *ai.Session
+	sessionsDir string
+	checker     tools.AccessChecker
+	userInput   userinput.RequestForegroundUserInput
 
 	// interactive reports whether stdin is a terminal. Only interactive
 	// runs get the "thinking..." indicator, so piped output stays clean.
@@ -52,10 +53,12 @@ type promptRunner struct {
 // is non-empty, the session with that ID is loaded from the sessions
 // directory and continues where it left off.
 // The sessions directory is taken from cfg (which applies its defaults).
-// checker enforces tool permissions and questionHandler answers the model's
-// user_question tool; either may be nil, which allows every permission check
-// and omits user_question respectively.
-func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string, checker tools.AccessChecker, questionHandler tools.UserQuestionCallbackHandler) (PromptRunner, error) {
+// checker enforces tool permissions and userInput answers every foreground
+// user prompt — permission checks, the model's user_question tool, and the
+// tool-round-limit decision. Either may be nil, which allows every
+// permission check, omits user_question, and stops the turn at the round
+// limit respectively.
+func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig, resumeID string, checker tools.AccessChecker, userInput userinput.RequestForegroundUserInput) (PromptRunner, error) {
 	sessionsDir := cfg.SessionsDir
 
 	provider, err := modelclient.New(conf)
@@ -64,11 +67,11 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig,
 	}
 
 	this := &promptRunner{
-		model:           conf.ModelName,
-		sessionsDir:     sessionsDir,
-		checker:         checker,
-		questionHandler: questionHandler,
-		interactive:     isTerminal(os.Stdin),
+		model:       conf.ModelName,
+		sessionsDir: sessionsDir,
+		checker:     checker,
+		userInput:   userInput,
+		interactive: isTerminal(os.Stdin),
 	}
 
 	loop := ai.NewLoop(provider)
@@ -102,6 +105,7 @@ func NewPromptRunner(conf *config.ApiModelInterfaceDetails, cfg *config.GConfig,
 			return nil, err
 		}
 		session.Tools = this.tracedTools(this.checker)
+		session.UserInput = this.userInput
 		this.session = session
 		fmt.Printf("(resumed session %s: %d messages)\n", resumeID, len(session.Messages()))
 	} else {
@@ -133,6 +137,7 @@ func (this *promptRunner) Reset() {
 	this.session = ai.NewSession(this.loop)
 	this.session.Model = this.model
 	this.session.Tools = this.tracedTools(this.checker)
+	this.session.UserInput = this.userInput
 }
 
 func (this *promptRunner) SessionID() string {
@@ -147,7 +152,7 @@ func (this *promptRunner) Save() (string, error) {
 // must be visible, otherwise a tool round looks like a hung prompt. Calls
 // are summarized (full command line for shells, the path for file tools).
 func (this *promptRunner) tracedTools(checker tools.AccessChecker) []ai.Tool {
-	ts := tools.AllTools(checker, this.questionHandler)
+	ts := tools.AllTools(checker, this.userInput)
 	for i := range ts {
 		name := ts[i].Name
 		handler := ts[i].Handler

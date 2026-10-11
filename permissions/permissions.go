@@ -1,39 +1,42 @@
 // Package permissions enforces the category-based permission rules held in
 // config.GConfig: filesystem (per directory, read/write), shell (one policy
 // for all shell operations) and web (per domain). Unanswered checks go to
-// the PermissionGranter, and its answer is recorded in the config.
+// the user input, and its answer is recorded in the config.
 package permissions
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
 
 	"github.com/kncept/guacamole/config"
+	"github.com/kncept/guacamole/userinput"
 )
 
-// PermissionGranter asks the user for a decision on one permission check.
-// category names the category (and, for the filesystem, the access kind):
-// "filesystem read", "filesystem write", "shell" or "web". value is the
-// path, command or domain being accessed.
-type PermissionGranter interface {
-	AskForAccess(category string, value string) config.Policy
-}
+// The option labels offered when a permission check falls through to the
+// user. "Allow this Time" answers the current check only; "Allow Always"
+// and "Deny Forever" are recorded as the rule for that path/domain.
+const (
+	optionAllowAlways = "Allow Always"
+	optionAllowOnce   = "Allow this Time"
+	optionDenyForever = "Deny Forever"
+)
 
 func NewPermissionsManager(
 	config *config.GConfig,
-	permissionGranter PermissionGranter,
+	userInput userinput.RequestForegroundUserInput,
 ) *PermissionsManager {
 	return &PermissionsManager{
-		config:            config,
-		permissionGranter: permissionGranter,
+		config:    config,
+		userInput: userInput,
 	}
 }
 
 // always use New(), never directly create
 type PermissionsManager struct {
-	config            *config.GConfig
-	permissionGranter PermissionGranter
+	config    *config.GConfig
+	userInput userinput.RequestForegroundUserInput
 }
 
 // AccessKind splits a permission check into read and write.
@@ -47,8 +50,8 @@ const (
 // IsAllowedPath checks the filesystem category against path, split into the
 // requested access kind. The allow-all override wins immediately; otherwise
 // the most specific directory rule applies. Allow and deny rules are applied
-// directly; ask rules (and no matching rule at all) fall through to the
-// PermissionGranter, and its answer is recorded and saved.
+// directly; ask rules (and no matching rule at all) fall through to the user
+// input, and its answer is recorded and saved.
 func (this *PermissionsManager) IsAllowedPath(path string, access AccessKind) (bool, error) {
 	// Always resolve to absolute path to handle "." and other relative paths consistently
 	absPath, err := filepath.Abs(path)
@@ -109,7 +112,7 @@ func (this *PermissionsManager) IsAllowedShellCommand(command string) (bool, err
 
 // IsAllowedDomain checks the web category against domain. The allow-all
 // override wins immediately; otherwise the most specific domain rule
-// applies, falling through to the PermissionGranter as with the filesystem
+// applies, falling through to the user input as with the filesystem
 // category. The answer is recorded and saved.
 func (this *PermissionsManager) IsAllowedDomain(domain string) (bool, error) {
 	web := this.config.Permissions.Web
@@ -147,18 +150,26 @@ func (this *PermissionsManager) FilesystemPermissions() config.FilesystemPermiss
 // writing anything to the config.
 const unrecorded = config.PolicyAsk
 
-// ask puts one question to the granter. A PolicyAsk answer means "allow
-// this time" and stays unrecorded; a "" answer (the prompt was closed)
-// defaults to deny.
+// ask puts one permission question to the user input. "Allow this Time"
+// allows the access without recording anything; an empty or missing answer
+// (the prompt could not be asked) defaults to deny.
 func (this *PermissionsManager) ask(category string, value string) config.Policy {
-	answer := this.permissionGranter.AskForAccess(category, value)
-	if answer == config.PolicyAsk {
-		return unrecorded
-	}
-	if answer == "" {
+	answer, err := this.userInput.Prompt(
+		fmt.Sprintf("Allow %s access to %s?", category, value),
+		false,
+		[]string{optionAllowOnce, optionAllowAlways, optionDenyForever},
+	)
+	if err != nil || answer == "" {
 		return config.PolicyDeny
 	}
-	return answer
+	switch answer {
+	case optionAllowOnce:
+		return unrecorded
+	case optionAllowAlways:
+		return config.PolicyAllow
+	default:
+		return config.PolicyDeny
+	}
 }
 
 // accessCategory labels an access kind for the granter prompt.

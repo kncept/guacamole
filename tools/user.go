@@ -6,20 +6,19 @@ import (
 	"fmt"
 
 	"github.com/kncept/guacamole/ai"
+	"github.com/kncept/guacamole/userinput"
 )
 
-func User(callbackHandler UserQuestionCallbackHandler) []ai.Tool {
+func User(userInput userinput.RequestForegroundUserInput) []ai.Tool {
 	return []ai.Tool{
-		UserQuestion(callbackHandler),
+		UserQuestion(userInput),
 	}
 }
 
-type UserQuestionCallbackHandler interface {
-	UserQuestionCallback(questions string, responses []string, allowFreetext bool) (string, error)
-}
-
-// needs a CALLBACK
-func UserQuestion(callbackHandler UserQuestionCallbackHandler) ai.Tool {
+// UserQuestion lets the model ask the user a question in the foreground and
+// use their answer, asked through the same RequestForegroundUserInput as
+// every other user prompt.
+func UserQuestion(userInput userinput.RequestForegroundUserInput) ai.Tool {
 	return ai.Tool{
 		Name:        "user_question",
 		Description: "Ask the user a question and return their answer",
@@ -54,7 +53,7 @@ func UserQuestion(callbackHandler UserQuestionCallbackHandler) ai.Tool {
 			if len(a.Responses) > 8 {
 				return "", fmt.Errorf("A maxiumum of 8 options are allowed")
 			}
-			return callbackHandler.UserQuestionCallback(a.Question, a.Responses, a.Freetext)
+			return userInput.Prompt(a.Question, a.Freetext, a.Responses)
 		},
 	}
 }
