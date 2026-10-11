@@ -32,55 +32,78 @@ func newBubble(text string, isUser bool) (*fyne.Container, *widget.Label) {
 	}
 	label := widget.NewLabelWithStyle(text, align, fyne.TextStyle{})
 	label.Wrapping = fyne.TextWrapWord
+	// Selectable lets the user select the message text and copy it (drag to
+	// select, then Ctrl/Cmd+C or right-click → Copy).
+	label.Selectable = true
 	background := canvas.NewRectangle(themeColor(name))
 	background.CornerRadius = 6
 	return container.NewStack(background, label), label
 }
 
-// addUserMessage appends the user's message as a bubble and returns the
-// thinking spinner shown as the bottommost entry while the query is in flight.
-func (c *chat) addUserMessage(text string) *widget.ProgressBarInfinite {
-	spinner := widget.NewProgressBarInfinite()
-	spinner.Hide()
-	bubble, _ := newBubble(text, true)
-	c.log.Add(bubble)
-	// Add spinner as a separate entry at the bottom
-	c.log.Add(spinner)
-	c.activeSpinner = spinner
-	c.scrollLog()
-	spinner.Show()
-	spinner.Start()
-	return spinner
+// spinnerWithCancel holds a spinner and its cancel button so they can be
+// moved and removed together as one log entry.
+type spinnerWithCancel struct {
+	spinner      *widget.ProgressBarInfinite
+	cancelButton *widget.Button
+	container    *fyne.Container
 }
 
-// removeSpinner removes the in-progress spinner from the log (if present).
-func (c *chat) removeSpinner(spinner *widget.ProgressBarInfinite) {
-	if spinner == nil {
+// addUserMessage appends the user's message as a bubble and returns a
+// spinnerWithCancel shown as the bottommost entry while the query is in
+// flight. The cancel button's OnTapped callback should be set by the caller.
+func (c *chat) addUserMessage(text string) *spinnerWithCancel {
+	spinner := widget.NewProgressBarInfinite()
+
+	// A red X sits to the right of the spinner so the user can abort the
+	// in-flight request (the whole turn set, including tool rounds).
+	cancelButton := widget.NewButtonWithIcon("", theme.CancelIcon(), nil)
+	cancelButton.Importance = widget.DangerImportance
+
+	spinnerRow := container.NewHBox(spinner, cancelButton)
+
+	bubble, _ := newBubble(text, true)
+	c.log.Add(bubble)
+	c.log.Add(spinnerRow)
+
+	swc := &spinnerWithCancel{
+		spinner:      spinner,
+		cancelButton: cancelButton,
+		container:    spinnerRow,
+	}
+	c.activeSpinner = swc
+	c.scrollLog()
+	spinner.Start()
+	return swc
+}
+
+// removeSpinner removes the in-progress spinner (and its cancel button) from
+// the log, if present.
+func (c *chat) removeSpinner(swc *spinnerWithCancel) {
+	if swc == nil {
 		return
 	}
-	spinner.Stop()
-	spinner.Hide()
-	c.log.Remove(spinner)
-	if c.activeSpinner == spinner {
+	swc.spinner.Stop()
+	c.log.Remove(swc.container)
+	if c.activeSpinner == swc {
 		c.activeSpinner = nil
 	}
 	c.scrollLog()
 }
 
-// ensureSpinnerAtBottom moves the active spinner to the bottom of the log
+// ensureSpinnerAtBottom moves the active spinner row to the bottom of the log
 // if it exists. Call this after adding any new content to the log.
 func (c *chat) ensureSpinnerAtBottom() {
 	if c.activeSpinner != nil {
 		// Remove and re-add to move to bottom
-		c.log.Remove(c.activeSpinner)
-		c.log.Add(c.activeSpinner)
+		c.log.Remove(c.activeSpinner.container)
+		c.log.Add(c.activeSpinner.container)
 		c.scrollLog()
 	}
 }
 
 // addAIMessage appends an empty AI bubble that grows as reply chunks arrive.
-// It is created lazily on the first chunk, so a failed turn leaves no empty
-// bubble behind.
+// It is created lazily on the first non-empty chunk, so a failed turn or an
+// entirely empty response leaves no empty bubble behind.
 func (c *chat) addAIMessage() *widget.Label {
 	bubble, label := newBubble("", false)
 	c.log.Add(bubble)
@@ -96,6 +119,7 @@ func (c *chat) addToolCall(summary string) *widget.Label {
 	label := widget.NewLabelWithStyle("→ "+summary, fyne.TextAlignLeading, fyne.TextStyle{Italic: true})
 	label.Wrapping = fyne.TextWrapWord
 	label.Importance = widget.LowImportance
+	label.Selectable = true
 	c.log.Add(label)
 	c.ensureSpinnerAtBottom()
 	return label
@@ -117,6 +141,7 @@ func (c *chat) addErrorMessage(err error) {
 	label := widget.NewLabelWithStyle("Error: "+err.Error(), fyne.TextAlignCenter, fyne.TextStyle{Italic: true})
 	label.Wrapping = fyne.TextWrapWord
 	label.Importance = widget.DangerImportance
+	label.Selectable = true
 	c.log.Add(label)
 	c.ensureSpinnerAtBottom()
 }

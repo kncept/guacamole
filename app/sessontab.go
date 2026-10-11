@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -282,8 +283,17 @@ func (st *sessionTab) inputBox() *fyne.Container {
 // reply into the session log. The spinner at the bottom of the log runs for
 // as long as the query is active.
 func (st *sessionTab) runPrompt(text string) {
-	spinner := st.chat.addUserMessage(text)
+	swc := st.chat.addUserMessage(text)
 	st.chat.input.SetText("")
+
+	// Create a cancellable context for this request. Cancelling it aborts
+	// the whole turn set: the in-flight model call and any tool rounds.
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// The red X next to the spinner aborts the request.
+	swc.cancelButton.OnTapped = func() {
+		cancel()
+	}
 
 	go func() {
 		var reply strings.Builder
@@ -294,6 +304,13 @@ func (st *sessionTab) runPrompt(text string) {
 		loop.OnChunk = func(chunk ai.Chunk) error {
 			reply.WriteString(chunk.Delta)
 			fyne.Do(func() {
+				// Trim leading/trailing newlines from the accumulated response
+				displayText := strings.Trim(reply.String(), "\n")
+				// A response that is entirely empty (only whitespace) gets no
+				// bubble at all: skip until there is something to show.
+				if strings.TrimSpace(displayText) == "" {
+					return
+				}
 				// If we're starting a new response after a tool round, create a new bubble
 				if inToolRound {
 					aiLabel = st.chat.addAIMessage()
@@ -302,8 +319,6 @@ func (st *sessionTab) runPrompt(text string) {
 				if aiLabel == nil {
 					aiLabel = st.chat.addAIMessage()
 				}
-				// Trim leading/trailing newlines from the accumulated response
-				displayText := strings.Trim(reply.String(), "\n")
 				aiLabel.SetText(displayText)
 				st.chat.scrollLog()
 			})
@@ -327,12 +342,16 @@ func (st *sessionTab) runPrompt(text string) {
 				originalOnResponse(resp)
 			}
 		}
-		_, err := sess.Say(context.Background(), text)
+		_, err := sess.Say(ctx, text)
 		fyne.Do(func() {
 			if err != nil {
-				st.chat.addErrorMessage(err)
+				// A cancelled turn is a deliberate stop, not a failure: don't
+				// show an error line for it.
+				if !errors.Is(err, context.Canceled) {
+					st.chat.addErrorMessage(err)
+				}
 			}
-			st.chat.removeSpinner(spinner)
+			st.chat.removeSpinner(swc)
 			st.chat.scrollLog()
 		})
 	}()

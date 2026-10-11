@@ -19,8 +19,10 @@ type chat struct {
 	log           *fyne.Container // VBox of message bubbles, newest at the bottom
 	logScroll     *container.Scroll
 	input         *widget.Entry
-	session       *ai.Session
-	activeSpinner *widget.ProgressBarInfinite // spinner shown while a request is in flight
+	session *ai.Session
+	// activeSpinner is the spinner-and-cancel row shown while a request is in
+	// flight, or nil when no request is running.
+	activeSpinner *spinnerWithCancel
 }
 
 // Guac holds the state and references for the Guacamole GUI application.
