@@ -87,13 +87,21 @@ const (
 	// the OpenAI-compatible API but lists models from OpenCode's own
 	// (non-standard) endpoint.
 	ModelProviderTypeOpenCode ModelProviderType = "OpenCode"
+	// ModelProviderTypeMistral is the Mistral AI API: Chat Completions
+	// inference (/v1/chat/completions) with OpenAI-compatible model listing
+	// (/v1/models).
+	ModelProviderTypeMistral ModelProviderType = "Mistral"
+	// ModelProviderTypeGemini is the Google Gemini (Generative Language) API:
+	// generateContent inference (models/{model}:generateContent) with the
+	// Models API listing endpoint (GET /models).
+	ModelProviderTypeGemini ModelProviderType = "Gemini"
 )
 
 // SelectableAPITypes lists the API types a custom provider may choose.
 // OpenCode is deliberately absent: it is applied automatically by the
 // OpenCode preset and is not user-selectable.
 func SelectableAPITypes() []ModelProviderType {
-	return []ModelProviderType{ModelProviderTypeOpenAI, ModelProviderTypeAnthropic}
+	return []ModelProviderType{ModelProviderTypeOpenAI, ModelProviderTypeAnthropic, ModelProviderTypeMistral, ModelProviderTypeGemini}
 }
 
 // DefaultBaseURL returns the default base URL for the API type, or an empty
@@ -106,6 +114,10 @@ func (t ModelProviderType) DefaultBaseURL() string {
 		return "https://api.anthropic.com/v1"
 	case ModelProviderTypeOpenCode:
 		return "https://opencode.ai/zen/v1"
+	case ModelProviderTypeMistral:
+		return "https://api.mistral.ai/v1"
+	case ModelProviderTypeGemini:
+		return "https://generativelanguage.googleapis.com/v1beta"
 	default:
 		return ""
 	}
@@ -121,6 +133,10 @@ func (t ModelProviderType) DefaultName() string {
 		return "Anthropic"
 	case ModelProviderTypeOpenCode:
 		return "OpenCode"
+	case ModelProviderTypeMistral:
+		return "Mistral"
+	case ModelProviderTypeGemini:
+		return "Gemini"
 	default:
 		return ""
 	}
@@ -143,6 +159,10 @@ const (
 	ProviderPresetHuggingFace ProviderPreset = "HuggingFace"
 	// ProviderPresetGroq is the Groq provider.
 	ProviderPresetGroq ProviderPreset = "Groq"
+	// ProviderPresetMistral is the Mistral AI provider.
+	ProviderPresetMistral ProviderPreset = "Mistral"
+	// ProviderPresetGemini is the Google Gemini (Google AI) provider.
+	ProviderPresetGemini ProviderPreset = "Gemini"
 	// ProviderPresetCustom is a user-defined provider: every field is entered
 	// by hand.
 	ProviderPresetCustom ProviderPreset = "Custom"
@@ -156,6 +176,8 @@ func ProviderPresets() []ProviderPreset {
 		ProviderPresetNvidia,
 		ProviderPresetHuggingFace,
 		ProviderPresetGroq,
+		ProviderPresetMistral,
+		ProviderPresetGemini,
 		ProviderPresetCustom,
 	}
 }
@@ -177,6 +199,8 @@ var presetDetails = map[ProviderPreset]PresetDetails{
 	ProviderPresetNvidia:      {Name: "nVidia", BaseURL: "https://integrate.api.nvidia.com/v1", APIType: ModelProviderTypeOpenAI},
 	ProviderPresetHuggingFace: {Name: "HuggingFace", BaseURL: "https://router.huggingface.co/v1", APIType: ModelProviderTypeOpenAI},
 	ProviderPresetGroq:        {Name: "Groq", BaseURL: "https://api.groq.com/openai/v1", APIType: ModelProviderTypeOpenAI},
+	ProviderPresetMistral:     {Name: "Mistral", BaseURL: "https://api.mistral.ai/v1", APIType: ModelProviderTypeMistral},
+	ProviderPresetGemini:      {Name: "Gemini", BaseURL: "https://generativelanguage.googleapis.com/v1beta", APIType: ModelProviderTypeGemini},
 }
 
 // Details returns the fixed connection details for preset p. Custom has none,
@@ -298,6 +322,10 @@ func migrateAPIType(t ModelProviderType) ModelProviderType {
 		return ModelProviderTypeAnthropic
 	case ModelProviderTypeOpenCode:
 		return ModelProviderTypeOpenCode
+	case ModelProviderTypeMistral:
+		return ModelProviderTypeMistral
+	case ModelProviderTypeGemini:
+		return ModelProviderTypeGemini
 	default:
 		return ModelProviderTypeOpenAI
 	}

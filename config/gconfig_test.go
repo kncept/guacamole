@@ -578,3 +578,43 @@ func TestAppAttributionHeaders(t *testing.T) {
 		t.Errorf("headers = %v, want %v", got, want)
 	}
 }
+
+// TestLoadMigratesMistralType checks that a config file with the old
+// "Mistral" API type string is migrated to the current ModelProviderTypeMistral.
+func TestLoadMigratesMistralType(t *testing.T) {
+	home := withHome(t)
+	dir := filepath.Join(home, ".guac")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Config with the old "Mistral" type string (before ModelProviderTypeMistral existed)
+	raw := `{
+		"modelProviders": [
+			{"name": "Mistral", "type": "Mistral", "baseUrl": "https://api.mistral.ai/v1", "apiKey": "mistral-key", "models": ["mistral-large-latest"]}
+		]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, configFileName), []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	p, ok := c.GetModelProvider(0)
+	if !ok {
+		t.Fatal("Mistral provider missing after migration")
+	}
+	if p.APIType != ModelProviderTypeMistral {
+		t.Errorf("Mistral APIType = %q, want %q", p.APIType, ModelProviderTypeMistral)
+	}
+	if p.BaseURL != "https://api.mistral.ai/v1" {
+		t.Errorf("Mistral BaseURL = %q, want https://api.mistral.ai/v1", p.BaseURL)
+	}
+	if got := p.APIKey.String(); got != "mistral-key" {
+		t.Errorf("Mistral APIKey = %q, want %q", got, "mistral-key")
+	}
+	if len(p.Models) != 1 || p.Models[0] != "mistral-large-latest" {
+		t.Errorf("Mistral Models = %v, want [mistral-large-latest]", p.Models)
+	}
+}

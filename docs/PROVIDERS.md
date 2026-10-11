@@ -13,6 +13,8 @@ provider list lives in `~/.guac/config.json` and is managed from the GUI
 | ---- | --- | ----- |
 | `OpenAI` | OpenAI Responses API (`/responses`) | Also used by any OpenAI-compatible endpoint (OpenRouter, nVidia, HuggingFace, local servers) |
 | `Anthropic` | Anthropic Messages API (`/v1/messages`) | Model listed through the Anthropic Models API |
+| `Mistral` | Mistral Chat Completions API (`/v1/chat/completions`) | Model listed through OpenAI-compatible `/v1/models` |
+| `Gemini` | Google Generative Language API (`models/{model}:generateContent`) | Model listed through Models API (`GET /models`) |
 | `OpenCode` | OpenAI-compatible inference + OpenCode's own model listing | Applied automatically by the OpenCode preset; not user-selectable |
 
 ## Presets
@@ -28,7 +30,9 @@ by hand via **Custom**.
 | `nVidia` | `https://integrate.api.nvidia.com/v1` | `OpenAI` |
 | `HuggingFace` | `https://router.huggingface.co/v1` | `OpenAI` |
 | `Groq` | `https://api.groq.com/openai/v1` | `OpenAI` |
-| `Custom` | whatever you enter | `OpenAI` or `Anthropic` |
+| `Mistral` | `https://api.mistral.ai/v1` | `Mistral` |
+| `Gemini` | `https://generativelanguage.googleapis.com/v1beta` | `Gemini` |
+| `Custom` | whatever you enter | `OpenAI`, `Anthropic`, `Mistral`, or `Gemini` |
 
 An API key is optional for OpenAI-compatible endpoints (the config can fall
 back to the `OPENAI_API_KEY` environment variable); providers like Anthropic
@@ -123,6 +127,8 @@ are saved to `models`:
 
 - `OpenAI` / compatible — `GET <baseUrl>/models` (the standard OpenAI listing).
 - `Anthropic` — the Anthropic Models API.
+- `Mistral` — `GET <baseUrl>/models` (OpenAI-compatible listing).
+- `Gemini` — `GET <baseUrl>/models` (Models API listing).
 - `OpenCode` — `GET <baseUrl>/models`, accepting both the standard OpenAI
   shape and the legacy `{"models":[…]}` shape; model IDs ending in `-free` are
   marked free.

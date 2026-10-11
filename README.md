@@ -46,6 +46,7 @@ The `docs/` folder has the details:
 | [GUI](docs/GUI.md) | The desktop app: sessions, preferences (providers, roles, magi, sessions, permissions), building |
 | [TOOLS](docs/TOOLS.md) | The tools a model can call: filesystem, shell, web, user questions |
 | [PROVIDERS](docs/PROVIDERS.md) | API types, presets, the config file, app attribution, model selection & listing |
+| [CONFIG](docs/CONFIG.md) | Complete config file reference: permissions, providers, selected model, magi, env fallback |
 | [ARCHITECTURE](docs/ARCHITECTURE.md) | Internals: the `ai` request/processing/response loop, sessions, tool use, permissions |
 | [CONTRIBUTING](docs/CONTRIBUTING.md) | How to contribute: fork → branch → pull request |
 
