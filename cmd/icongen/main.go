@@ -33,16 +33,19 @@ const (
 	bowlROut = 0.35
 	bowlRIn  = 0.20
 
-	// Gap in the C (where the G opens)
-	// Angle from -pi/2 to pi/2 (right side open)
-	gapStartAngle = math.Pi * 0.4  // ~72 degrees
-	gapEndAngle   = -math.Pi * 0.4 // ~-72 degrees
+	// Aperture: the open arc of the G, at the upper right. Angles are measured
+	// from the positive x-axis, and because y grows downward in the rendered
+	// image, positive angles point below the centre. The lower arm wraps around
+	// the bottom and rises to the bar at 0 degrees, so the aperture runs from
+	// the top of the upper arm down to 0 degrees.
+	apertureTopAngle = -math.Pi * 0.4 // ~-72 degrees: end of the upper arm
+	apertureEndAngle = 0.0            // 0 degrees: lower arm meets the bar
 
 	// Horizontal bar of the G
-	barX0     = 0.5  // starts at center
-	barX1     = 0.85 // extends to right
-	barY      = 0.5  // horizontal through center
-	barThick  = 0.08 // thickness of bar
+	barX0    = 0.5               // starts at center
+	barX1    = bowlCX + bowlROut // right extent reaches the outer circle
+	barY     = 0.5               // horizontal through center
+	barThick = 0.08              // thickness of bar
 )
 
 // glyphPad is the empty margin kept around the glyph, as a fraction of the
@@ -149,32 +152,28 @@ func render(size int, x0, y0, x1, y1 float64) *image.NRGBA {
 
 // inGlyph reports whether the point is covered by the bowl or the bar.
 func inGlyph(x, y float64) bool {
-	// Check if in the C-shaped bowl (annulus with a gap on the right)
 	dx := x - bowlCX
 	dy := y - bowlCY
 	d := math.Hypot(dx, dy)
 
-	if d <= bowlROut && d >= bowlRIn {
-		// Check if in the gap (right side opening)
-		angle := math.Atan2(dy, dx)
-		// Normalize angle to [-pi, pi]
-		// Gap is from gapEndAngle to gapStartAngle (crossing -pi/pi boundary)
-		if gapEndAngle < gapStartAngle {
-			// Gap doesn't cross the -pi/pi boundary
-			if angle >= gapEndAngle && angle <= gapStartAngle {
-				return false // In the gap
-			}
-		} else {
-			// Gap crosses the boundary
-			if angle >= gapEndAngle || angle <= gapStartAngle {
-				return false // In the gap
-			}
-		}
+	// Check the horizontal bar first. Its outer end reaches the outer edge of
+	// the bowl, so that end sits inside the aperture; testing the bar before
+	// the bowl keeps it from being clipped at the bowl's inner edge.
+	if x >= barX0 && x <= barX1 &&
+		y >= barY-barThick/2 && y <= barY+barThick/2 &&
+		d <= bowlROut {
 		return true
 	}
 
-	// Check if in the horizontal bar of the G
-	if x >= barX0 && x <= barX1 && y >= barY-barThick/2 && y <= barY+barThick/2 {
+	// Check if in the C-shaped bowl (an annulus).
+	if d <= bowlROut && d >= bowlRIn {
+		// Check if in the aperture (the opening on the upper right).
+		// Positive angles are below the centre, so the aperture spans from
+		// apertureTopAngle up to apertureEndAngle (0 degrees, at the bar).
+		angle := math.Atan2(dy, dx)
+		if angle >= apertureTopAngle && angle <= apertureEndAngle {
+			return false // In the aperture
+		}
 		return true
 	}
 
