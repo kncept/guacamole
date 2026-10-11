@@ -54,12 +54,14 @@ type spinnerWithCancel struct {
 func (c *chat) addUserMessage(text string) *spinnerWithCancel {
 	spinner := widget.NewProgressBarInfinite()
 
-	// A red X sits to the right of the spinner so the user can abort the
+	// A red X sits to the left of the spinner so the user can abort the
 	// in-flight request (the whole turn set, including tool rounds).
 	cancelButton := widget.NewButtonWithIcon("", theme.CancelIcon(), nil)
 	cancelButton.Importance = widget.DangerImportance
 
-	spinnerRow := container.NewHBox(spinner, cancelButton)
+	// Use Border layout so the spinner expands to fill the full width
+	// with the cancel button fixed on the left.
+	spinnerRow := container.NewBorder(nil, nil, cancelButton, nil, spinner)
 
 	bubble, _ := newBubble(text, true)
 	c.log.Add(bubble)
