@@ -141,6 +141,8 @@ const (
 	ProviderPresetNvidia ProviderPreset = "nVidia"
 	// ProviderPresetHuggingFace is the HuggingFace provider.
 	ProviderPresetHuggingFace ProviderPreset = "HuggingFace"
+	// ProviderPresetGroq is the Groq provider.
+	ProviderPresetGroq ProviderPreset = "Groq"
 	// ProviderPresetCustom is a user-defined provider: every field is entered
 	// by hand.
 	ProviderPresetCustom ProviderPreset = "Custom"
@@ -153,6 +155,7 @@ func ProviderPresets() []ProviderPreset {
 		ProviderPresetOpenRouter,
 		ProviderPresetNvidia,
 		ProviderPresetHuggingFace,
+		ProviderPresetGroq,
 		ProviderPresetCustom,
 	}
 }
@@ -173,6 +176,7 @@ var presetDetails = map[ProviderPreset]PresetDetails{
 	ProviderPresetOpenRouter:  {Name: "openrouter", BaseURL: "https://openrouter.ai/api/v1", APIType: ModelProviderTypeOpenAI},
 	ProviderPresetNvidia:      {Name: "nVidia", BaseURL: "https://integrate.api.nvidia.com/v1", APIType: ModelProviderTypeOpenAI},
 	ProviderPresetHuggingFace: {Name: "HuggingFace", BaseURL: "https://router.huggingface.co/v1", APIType: ModelProviderTypeOpenAI},
+	ProviderPresetGroq:        {Name: "Groq", BaseURL: "https://api.groq.com/openai/v1", APIType: ModelProviderTypeOpenAI},
 }
 
 // Details returns the fixed connection details for preset p. Custom has none,

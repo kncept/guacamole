@@ -27,6 +27,7 @@ by hand via **Custom**.
 | `openrouter` | `https://openrouter.ai/api/v1` | `OpenAI` |
 | `nVidia` | `https://integrate.api.nvidia.com/v1` | `OpenAI` |
 | `HuggingFace` | `https://router.huggingface.co/v1` | `OpenAI` |
+| `Groq` | `https://api.groq.com/openai/v1` | `OpenAI` |
 | `Custom` | whatever you enter | `OpenAI` or `Anthropic` |
 
 An API key is optional for OpenAI-compatible endpoints (the config can fall
