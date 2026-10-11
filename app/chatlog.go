@@ -35,6 +35,7 @@ func newBubble(text string, isUser bool) (*fyne.Container, *widget.Label) {
 	// Selectable lets the user select the message text and copy it (drag to
 	// select, then Ctrl/Cmd+C or right-click → Copy).
 	label.Selectable = true
+
 	background := canvas.NewRectangle(themeColor(name))
 	background.CornerRadius = 6
 	return container.NewStack(background, label), label
