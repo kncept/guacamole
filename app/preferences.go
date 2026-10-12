@@ -500,10 +500,18 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 	var modelInfos []restfulai.ModelInfo
 	var checks []*widget.Check
 
-	// persist writes the currently checked models back to the provider, saves
-	// the config immediately, and refreshes the open sessions' model dropdowns,
-	// so a selection takes effect without pressing Save or restarting the app.
-	persist := func() {
+	// selected is the staged selection: it starts from the provider's saved
+	// models and is only written back when Save is pressed. Keeping it separate
+	// from the checkboxes means Cancel discards changes and a re-fetch rebuilds
+	// the rows without losing unsaved ticks.
+	selected := make(map[string]bool, len(prov.Models))
+	for _, m := range prov.Models {
+		selected[m] = true
+	}
+
+	// save writes the staged selection back to the provider, saves the config,
+	// and refreshes the open sessions' model dropdowns.
+	save := func() {
 		var models []string
 		for i, c := range checks {
 			if c.Checked && i < len(modelInfos) {
@@ -521,8 +529,8 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 	rows := container.NewVBox()
 
 	// populate rebuilds the visible model rows for infos. Checkboxes reflect the
-	// models already saved on the provider, so re-fetching the catalog never
-	// discards a selection.
+	// staged selection, so re-fetching the catalog never discards an unsaved
+	// change.
 	populate := func(infos []restfulai.ModelInfo) {
 		modelInfos = infos
 		checks = nil
@@ -558,17 +566,12 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 		rows.Add(container.NewHBox(headerParts...))
 		rows.Add(widget.NewSeparator())
 
-		// One row per model, with a checkbox wired to persist on toggle.
+		// One row per model, with a checkbox wired to the staged selection, so
+		// changes are only applied when Save is pressed.
 		for _, m := range infos {
-			checked := false
-			for _, existing := range prov.Models {
-				if existing == m.ID {
-					checked = true
-					break
-				}
-			}
-			c := widget.NewCheck("", func(bool) { persist() })
-			c.Checked = checked
+			c := widget.NewCheck("", nil)
+			c.Checked = selected[m.ID]
+			c.OnChanged = func(checked bool) { selected[m.ID] = checked }
 			checks = append(checks, c)
 
 			rowParts := []fyne.CanvasObject{widget.NewLabel(m.ID)}
@@ -615,11 +618,11 @@ func (p *preferencesScreen) showProviderModels(idx int) {
 	populate(initialInfos)
 
 	header := container.NewBorder(nil, nil,
-		widget.NewButtonWithIcon("Done", theme.NavigateBackIcon(), goBack),
+		widget.NewButtonWithIcon("Cancel", theme.NavigateBackIcon(), goBack),
 		container.NewHBox(
 			widget.NewButtonWithIcon("Re-fetch Models", theme.DownloadIcon(), fetchAndPopulate),
 			widget.NewButtonWithIcon("Save", theme.ContentAddIcon(), func() {
-				persist()
+				save()
 				goBack()
 			}),
 		),
