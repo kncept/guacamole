@@ -44,3 +44,31 @@ jobs:
       # on Linux/Windows and the .app bundle on macOS).
       - name: Build
         run: ./run.sh build
+
+      # upload-artifact drops the executable bit (files come back 644), which
+      # would break the binaries and the .app bundle, so package them as
+      # tarballs first; tar preserves the permissions and the bundle layout.
+      - name: Package binaries
+        run: |
+          mkdir -p dist
+          tar -czf "dist/guacamole-cli-${{ matrix.os }}.tar.gz" -C .build/cli .
+          gui_dir=".build/gui"
+          if [ -d .build/macos ]; then
+            gui_dir=".build/macos"
+          fi
+          tar -czf "dist/guacamole-gui-${{ matrix.os }}.tar.gz" -C "${gui_dir}" .
+
+      - name: Upload CLI binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: guacamole-cli-${{ matrix.os }}
+          path: dist/guacamole-cli-${{ matrix.os }}.tar.gz
+          if-no-files-found: error
+
+      - name: Upload GUI
+        uses: actions/upload-artifact@v4
+        with:
+          # Linux/Windows GUI binaries; macOS packages the Guacamole.app bundle.
+          name: guacamole-gui-${{ matrix.os }}
+          path: dist/guacamole-gui-${{ matrix.os }}.tar.gz
+          if-no-files-found: error
