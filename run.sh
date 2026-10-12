@@ -176,21 +176,36 @@ dependencies_macos() {
   echo "Re-run './run.sh dependencies' once the installation finishes."
 }
 
+# True when the native libraries Fyne needs to build on Linux are already
+# present: a C compiler plus pkg-config and the OpenGL/X11/xkbcommon/Wayland
+# development headers. Lets dependencies_linux skip the (slow) package-manager
+# update/install when nothing is missing.
+linux_deps_present() {
+  command -v gcc >/dev/null 2>&1 || return 1
+  command -v pkg-config >/dev/null 2>&1 || return 1
+  pkg-config --exists gl x11 xkbcommon wayland-client 2>/dev/null
+}
+
 # Install the native libraries Fyne needs to build on Linux: a C compiler plus
 # the OpenGL, X11, xkbcommon and Wayland development headers (GLFW needs the
-# Wayland headers even for its X11 backend).
+# Wayland headers even for its X11 backend). No-op when they are all installed.
 dependencies_linux() {
+  if linux_deps_present; then
+    echo "Fyne build dependencies already installed"
+    return 0
+  fi
+
   if command -v apt-get >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with apt-get..."
     sudo apt-get update
-    sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
+    sudo apt-get install -y gcc pkg-config libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
   elif command -v dnf >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with dnf..."
-    sudo dnf install -y gcc libXcursor-devel libXrandr-devel mesa-libGL-devel \
+    sudo dnf install -y gcc pkgconf-pkg-config libXcursor-devel libXrandr-devel mesa-libGL-devel \
       libXi-devel libXinerama-devel libXxf86vm-devel libxkbcommon-devel wayland-devel
   elif command -v pacman >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with pacman..."
-    sudo pacman -S --noconfirm --needed gcc libx11 libxcursor libxrandr \
+    sudo pacman -S --noconfirm --needed gcc pkgconf libx11 libxcursor libxrandr \
       libxinerama libxi libxxf86vm mesa libxkbcommon wayland
   else
     echo "Error: no supported package manager found (apt-get, dnf, or pacman)." >&2
@@ -267,8 +282,10 @@ run() {
   "${out}"
 }
 
-# Build every target
+# Build every target. Ensures the native build dependencies are present first
+# (a no-op when they already are), so a plain './run.sh build' just works.
 build() {
+  dependencies
   build_cli
   build_gui
   build_macos
@@ -296,7 +313,7 @@ Commands:
   dependencies:macos   Install the native build dependencies for macOS (Xcode command line tools)
   dependencies:linux   Install the native build dependencies for Linux (gcc + OpenGL/X11/xkbcommon/Wayland headers)
   dependencies:windows Install the native build dependencies for Windows (MinGW-w64 gcc)
-  build                Build every target (host CLI, host GUI, macOS .app)
+  build                Build every target (installs missing native deps, then host CLI, host GUI, macOS .app)
   build:cli            Build the CLI for the current host into .build/cli/
   build:gui            Build the desktop GUI for the host into .build/gui/
   build:macos          Build the macOS GUI into .build/macos/Guacamole.app (requires macOS)

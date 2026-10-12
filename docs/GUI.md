@@ -262,7 +262,7 @@ for the config file shape.
 ```sh
 ./run.sh help                # all commands
 ./run.sh dependencies        # native Fyne deps for this OS (Xcode tools / OpenGL, X11 / MinGW)
-./run.sh build               # host CLI + host GUI (macOS: .app)
+./run.sh build               # host CLI + host GUI (macOS: .app); installs missing native deps first
 ./run.sh build:cli           # host CLI binary only
 ./run.sh build:gui           # host GUI binary (needs the dependencies above)
 ./run.sh build:macos         # macOS Guacamole.app bundle (needs a macOS host)
