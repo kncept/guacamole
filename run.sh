@@ -8,35 +8,32 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-# Supported OS/ARCH combos for the CLI (pure Go, built with CGO disabled)
-CLI_TARGETS=(
-  "linux/amd64"
-  "linux/arm64"
-  "darwin/amd64"
-  "darwin/arm64"
-  "windows/amd64"
-)
-
-# Build the CLI for every supported OS/ARCH into .build/cli/
+# Build the CLI for the current host into .build/cli/.
+# The CLI is pure Go (built with CGO disabled), but it is only built for the
+# host platform; the binary keeps the guacamole_<os>_<arch> naming convention.
 build_cli() {
-  echo "Building CLI for supported OS/ARCH..."
+  local goos goarch
+  goos="$(current_goos)"
+  goarch="$(current_goarch)"
+
+  if [ "${goos}" = "unknown" ] || [ "${goarch}" = "unknown" ]; then
+    echo "Error: cannot detect host platform for build:cli (got ${goos}/${goarch})" >&2
+    return 1
+  fi
+
+  local suffix=""
+  if [ "${goos}" = "windows" ]; then
+    suffix=".exe"
+  fi
+
   local out_dir=".build/cli"
+  local out_name="guacamole_${goos}_${goarch}${suffix}"
+  echo "Building ${out_name}..."
   mkdir -p "${out_dir}"
+  CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+    go build -o "${out_dir}/${out_name}" ./cmd/cli
 
-  for target in "${CLI_TARGETS[@]}"; do
-    local go_os="${target%%/*}"
-    local go_arch="${target##*/}"
-    local suffix=""
-    if [ "${go_os}" = "windows" ]; then
-      suffix=".exe"
-    fi
-    local out_name="guacamole_${go_os}_${go_arch}${suffix}"
-    echo "Building ${out_name}..."
-    CGO_ENABLED=0 GOOS="${go_os}" GOARCH="${go_arch}" \
-      go build -o "${out_dir}/${out_name}" ./cmd/cli
-  done
-
-  echo "CLI builds complete in ${out_dir}/"
+  echo "CLI build complete in ${out_dir}/"
 }
 
 # Build the desktop GUI for the current host into .build/gui/.
@@ -299,8 +296,8 @@ Commands:
   dependencies:macos   Install the native build dependencies for macOS (Xcode command line tools)
   dependencies:linux   Install the native build dependencies for Linux (gcc + OpenGL/X11/xkbcommon/Wayland headers)
   dependencies:windows Install the native build dependencies for Windows (MinGW-w64 gcc)
-  build                Build every target (CLI for all supported OS/ARCH, host GUI, macOS .app)
-  build:cli            Build the CLI for every supported OS/ARCH into .build/cli/
+  build                Build every target (host CLI, host GUI, macOS .app)
+  build:cli            Build the CLI for the current host into .build/cli/
   build:gui            Build the desktop GUI for the host into .build/gui/
   build:macos          Build the macOS GUI into .build/macos/Guacamole.app (requires macOS)
   run                  Build and run the app for the host platform (opens the macOS GUI, or runs the host CLI)
