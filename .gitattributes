@@ -1,0 +1,2 @@
+# Keep shell scripts LF on every platform so they run under Git Bash on Windows.
+*.sh text eol=lf

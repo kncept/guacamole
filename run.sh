@@ -39,6 +39,39 @@ build_cli() {
   echo "CLI builds complete in ${out_dir}/"
 }
 
+# Build the desktop GUI for the current host into .build/gui/.
+# Fyne binds to the native window system through cgo, so the GUI is host-only
+# and cannot be cross-compiled: the matching native toolchain must be installed
+# first (see the 'dependencies' command). On macOS the .app bundle built by
+# build:macos already contains the GUI, so this is skipped there.
+build_gui() {
+  local goos goarch
+  goos="$(current_goos)"
+  goarch="$(current_goarch)"
+
+  if [ "${goos}" = "darwin" ]; then
+    echo "Skipping host GUI build (macOS uses the .app from build:macos)"
+    return 0
+  fi
+
+  if [ "${goos}" = "unknown" ] || [ "${goarch}" = "unknown" ]; then
+    echo "Error: cannot detect host platform for build:gui (got ${goos}/${goarch})" >&2
+    return 1
+  fi
+
+  local suffix=""
+  if [ "${goos}" = "windows" ]; then
+    suffix=".exe"
+  fi
+
+  local out_dir=".build/gui"
+  local out="${out_dir}/guacamole_gui_${goos}_${goarch}${suffix}"
+  echo "Building host GUI for ${goos}/${goarch}..."
+  mkdir -p "${out_dir}"
+  CGO_ENABLED=1 go build -o "${out}" ./cmd/gui
+  echo "GUI build complete: ${out}"
+}
+
 # Build the macOS GUI into a .app bundle at .build/macos/Guacamole.app.
 # The GUI uses cgo (fyne/glfw + AppKit) so it can only be built for the host,
 # on a macOS machine. The bundle icon (an avocado-green letter G) is drawn by
@@ -123,12 +156,87 @@ current_goos() {
   esac
 }
 
-# Map the current host to a Go GOARCH.
+# Map the current host to a GOARCH.
 current_goarch() {
   case "$(uname -m)" in
     arm64|aarch64) echo "arm64" ;;
     x86_64|amd64) echo "amd64" ;;
     *) echo "unknown" ;;
+  esac
+}
+
+# Install the native libraries Fyne needs to build on macOS.
+# Fyne links against AppKit through cgo, which needs the Xcode command line
+# tools (they also provide iconutil, used for the .app icon).
+dependencies_macos() {
+  if xcode-select -p >/dev/null 2>&1; then
+    echo "Xcode command line tools already installed: $(xcode-select -p)"
+    return 0
+  fi
+
+  echo "Installing Xcode command line tools (required to build the Fyne GUI)..."
+  xcode-select --install || true
+  echo "Re-run './run.sh dependencies' once the installation finishes."
+}
+
+# Install the native libraries Fyne needs to build on Linux: a C compiler plus
+# the OpenGL, X11 and xkbcommon development headers.
+dependencies_linux() {
+  if command -v apt-get >/dev/null 2>&1; then
+    echo "Installing Fyne build dependencies with apt-get..."
+    sudo apt-get update
+    sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+  elif command -v dnf >/dev/null 2>&1; then
+    echo "Installing Fyne build dependencies with dnf..."
+    sudo dnf install -y gcc libXcursor-devel libXrandr-devel mesa-libGL-devel \
+      libXi-devel libXinerama-devel libXxf86vm-devel libxkbcommon-devel
+  elif command -v pacman >/dev/null 2>&1; then
+    echo "Installing Fyne build dependencies with pacman..."
+    sudo pacman -S --noconfirm --needed gcc libx11 libxcursor libxrandr \
+      libxinerama libxi libxxf86vm mesa libxkbcommon
+  else
+    echo "Error: no supported package manager found (apt-get, dnf, or pacman)." >&2
+    echo "Install a C compiler plus the OpenGL/X11/xkbcommon development headers." >&2
+    return 1
+  fi
+}
+
+# Fyne on Windows builds through cgo with a MinGW-w64 gcc. Git for Windows
+# ships one on the PATH of its bash; MSYS2's mingw64 is used as a fallback and,
+# under GitHub Actions, added to PATH for the steps that follow.
+dependencies_windows() {
+  if command -v gcc >/dev/null 2>&1; then
+    echo "Found $(gcc --version | head -n 1)"
+    return 0
+  fi
+
+  local mingw_bin="C:/msys64/mingw64/bin"
+  if [ -d "${mingw_bin}" ]; then
+    export PATH="${mingw_bin}:${PATH}"
+    if [ -n "${GITHUB_PATH:-}" ]; then
+      echo "${mingw_bin}" >> "${GITHUB_PATH}"
+    fi
+    echo "Using MinGW-w64 from ${mingw_bin}"
+    return 0
+  fi
+
+  echo "Error: no C compiler found. Install MinGW-w64 (e.g. via MSYS2) to build the GUI." >&2
+  return 1
+}
+
+# Install the native build dependencies for the current platform by
+# dispatching to the matching dependencies:<os> command.
+dependencies() {
+  local goos
+  goos="$(current_goos)"
+  case "${goos}" in
+    darwin) (dependencies_macos) ;;
+    linux) (dependencies_linux) ;;
+    windows) (dependencies_windows) ;;
+    *)
+      echo "Error: unsupported host for dependencies: ${goos}" >&2
+      return 1
+      ;;
   esac
 }
 
@@ -164,6 +272,7 @@ run() {
 # Build every target
 build() {
   build_cli
+  build_gui
   build_macos
 }
 
@@ -184,13 +293,18 @@ help() {
 Usage: ./run.sh <command>
 
 Commands:
-  help         Show this help message
-  build        Build every target (CLI for all supported OS/ARCH, macOS GUI for the host)
-  build:cli    Build the CLI for every supported OS/ARCH into .build/cli/
-  build:macos  Build the macOS GUI into .build/macos/Guacamole.app (requires macOS)
-  run          Build and run the app for the host platform (opens the macOS GUI, or runs the host CLI)
-  test         Run go tests (go test ./...)
-  clean        Remove generated files (.build/) and .DS_Store files
+  help                 Show this help message
+  dependencies         Install the native build dependencies for the host (autoselects the OS)
+  dependencies:macos   Install the native build dependencies for macOS (Xcode command line tools)
+  dependencies:linux   Install the native build dependencies for Linux (gcc + OpenGL/X11/xkbcommon headers)
+  dependencies:windows Install the native build dependencies for Windows (MinGW-w64 gcc)
+  build                Build every target (CLI for all supported OS/ARCH, host GUI, macOS .app)
+  build:cli            Build the CLI for every supported OS/ARCH into .build/cli/
+  build:gui            Build the desktop GUI for the host into .build/gui/
+  build:macos          Build the macOS GUI into .build/macos/Guacamole.app (requires macOS)
+  run                  Build and run the app for the host platform (opens the macOS GUI, or runs the host CLI)
+  test                 Run go tests (go test ./...)
+  clean                Remove generated files (.build/) and .DS_Store files
 EOF
 }
 
@@ -202,8 +316,23 @@ case "${1:-}" in
   build:cli)
     (build_cli)
     ;;
+  build:gui)
+    (build_gui)
+    ;;
   build:macos)
     (build_macos)
+    ;;
+  dependencies)
+    (dependencies)
+    ;;
+  dependencies:macos)
+    (dependencies_macos)
+    ;;
+  dependencies:linux)
+    (dependencies_linux)
+    ;;
+  dependencies:windows)
+    (dependencies_windows)
     ;;
   run)
     (run)

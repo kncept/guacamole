@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Run the same build on every runner; one failure must not hide the rest.
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # run.sh owns setup: it installs the native Fyne dependencies for the OS.
+      - name: Install dependencies
+        run: ./run.sh dependencies
+
+      # The same build command on every runner (CLI everywhere, plus the GUI
+      # on Linux/Windows and the .app bundle on macOS).
+      - name: Build
+        run: ./run.sh build
