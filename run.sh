@@ -180,23 +180,24 @@ dependencies_macos() {
 }
 
 # Install the native libraries Fyne needs to build on Linux: a C compiler plus
-# the OpenGL, X11 and xkbcommon development headers.
+# the OpenGL, X11, xkbcommon and Wayland development headers (GLFW needs the
+# Wayland headers even for its X11 backend).
 dependencies_linux() {
   if command -v apt-get >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with apt-get..."
     sudo apt-get update
-    sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev
+    sudo apt-get install -y gcc libgl1-mesa-dev xorg-dev libxkbcommon-dev libwayland-dev
   elif command -v dnf >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with dnf..."
     sudo dnf install -y gcc libXcursor-devel libXrandr-devel mesa-libGL-devel \
-      libXi-devel libXinerama-devel libXxf86vm-devel libxkbcommon-devel
+      libXi-devel libXinerama-devel libXxf86vm-devel libxkbcommon-devel wayland-devel
   elif command -v pacman >/dev/null 2>&1; then
     echo "Installing Fyne build dependencies with pacman..."
     sudo pacman -S --noconfirm --needed gcc libx11 libxcursor libxrandr \
-      libxinerama libxi libxxf86vm mesa libxkbcommon
+      libxinerama libxi libxxf86vm mesa libxkbcommon wayland
   else
     echo "Error: no supported package manager found (apt-get, dnf, or pacman)." >&2
-    echo "Install a C compiler plus the OpenGL/X11/xkbcommon development headers." >&2
+    echo "Install a C compiler plus the OpenGL/X11/xkbcommon/Wayland development headers." >&2
     return 1
   fi
 }
@@ -296,7 +297,7 @@ Commands:
   help                 Show this help message
   dependencies         Install the native build dependencies for the host (autoselects the OS)
   dependencies:macos   Install the native build dependencies for macOS (Xcode command line tools)
-  dependencies:linux   Install the native build dependencies for Linux (gcc + OpenGL/X11/xkbcommon headers)
+  dependencies:linux   Install the native build dependencies for Linux (gcc + OpenGL/X11/xkbcommon/Wayland headers)
   dependencies:windows Install the native build dependencies for Windows (MinGW-w64 gcc)
   build                Build every target (CLI for all supported OS/ARCH, host GUI, macOS .app)
   build:cli            Build the CLI for every supported OS/ARCH into .build/cli/
